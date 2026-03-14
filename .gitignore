@@ -1,4 +1,8 @@
 
 venv/
 
+.env
 
+bart-large-cnn/
+
+__pycache__/
