@@ -27,6 +27,5 @@ cat << EOF
  
 Virtual environment created and dependencies installed.
 
-Run the code with: python -m src.main
 EOF
 
