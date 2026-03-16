@@ -14,7 +14,7 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 #Set to CUDA gpu if available, else -> CPU
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-MODEL_ID = "./bart-large-cnn"
+MODEL_ID = "facebook/bart-large-cnn"
 
 # Load tokenizer and model
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
