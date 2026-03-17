@@ -45,7 +45,7 @@ TOKENIZE(R)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
 tokens = tokenizer(test_article, return_tensors="pt", max_length=512, truncation=True).to(DEVICE)
-tensor = torch.tensor(tokens["input_ids"].to(DEVICE))
+tensor = tokens["input_ids"].detach().clone().to(DEVICE)
 # print(tokens)
 
 """
@@ -60,8 +60,8 @@ model = BartForConditionalGeneration.from_pretrained(
 )
 
 # ensure no gradients are calculated or applied (we are doing inference, not training)
-outputs = model.generate(tensor)
-
+with torch.no_grad():
+    outputs = model.generate(tensor)
 
 # use the tokenizer to decode the generated output tokens into text
 for item in outputs:
