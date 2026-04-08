@@ -63,7 +63,8 @@ The "area" of a sentence a link "belongs" to.
 
 ##### Class: Linkage
 
-A set of [Link](#####class-link)\(s\).
+A set of [Link](#####class-link)\(s\). Usually contains a single parse of  
+a sentence where each sentence can have multiple parses.
 
 ##### Attributes
 
@@ -78,3 +79,15 @@ of a sentence.
 
 * link\(\)  
 Links a given word in a sentence.
+
+##### Class: Sentence
+
+The sentence object is used as input to the parser.  
+Given a Sentence object, the parser will produce  
+the set of possible linkages. And each linkage contains  
+the links between the words in the sentence.
+
+##### Methods
+* parse\(\)
+Returns the linkages found from the sentence object  
+it was called on.
