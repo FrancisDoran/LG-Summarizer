@@ -1,4 +1,6 @@
-from linkgrammar import Dictionary, Sentence, ParseOptions
+from linkgrammar import Dictionary, ParseOptions, Sentence
+
+#dpkg -L python3-link-grammar
 
 def desc(lkg):
     print(lkg.diagram())
