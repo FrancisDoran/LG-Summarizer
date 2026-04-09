@@ -12,9 +12,9 @@
 For more details or to look at other methods look [here.](https://github.com/opencog/link-grammar/blob/master/bindings/python/linkgrammar.py)
 
 #### TOC
-* [Docs layout](####structure)
-* [Class: ParseOptions](#####class-parseoptions)
-* [Class: Link](#####class-link)
+* [Docs layout](#structure)
+* [Class: ParseOptions](#class-parseoptions)
+* [Class: Link](#class-link)
 * [Class: Linkage](#class-linkage)
 * [Class: Sentence](#class-sentence)
 
