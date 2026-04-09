@@ -1,7 +1,7 @@
 ### Link Grammar API Documentation 
 *\(Relevant to this project only\)*
 
-<hr style="height:1px; solid gray">  
+<hr style="height:4px; solid gray">  
 
 #### Structure
 * Class  
@@ -16,8 +16,9 @@ For more details or to look at other methods look [here.](https://github.com/ope
 * [Class: ParseOptions](#####class-parseoptions)
 * [Class: Link](#####class-link)
 * [Class: Linkage](#class-linkage)
+* [Class: Sentence](#class-sentence)
 
-<hr style="height:1px; solid gray">
+<hr style="height:4px; solid black">
 
 ##### Class: ParseOptions
   
@@ -41,6 +42,8 @@ default = False
 Islands are disconnected link graphs  
 in the same sentence.
 
+<hr style="height:4px; solid black">
+
 ##### Class: Link
 
 Defines a single word's link.
@@ -61,6 +64,8 @@ Position of the link.
 * num\_domains\(\)  
 The "area" of a sentence a link "belongs" to.
 
+<hr style="height:4px; solid black">
+
 ##### Class: Linkage
 
 A set of [Link](#####class-link)\(s\). Usually contains a single parse of  
@@ -79,6 +84,8 @@ of a sentence.
 
 * link\(\)  
 Links a given word in a sentence.
+
+<hr style="height:4px; solid black">
 
 ##### Class: Sentence
 
