@@ -9,7 +9,8 @@ This project aims to embed linguistic theory into neural networks via link gramm
        * Uses python for virtual environment, and pip for package management.
 * **Demos**
    * [Baseline BART Summarizer](./baseline_model/model.py)
-   * [Link Grammar Parser](./lg_parser_demo/main.py)
 * **Our Model** 
    * [Custom Attention Mechanism](./model/LinkGramAttention.py)
    * [Token Transformer Layer](./model/TokenTransformerLayer.py)
+* **Link Grammar Interface**
+    * [Link Grammar API Documentation](./linkgrammar_docs.md)
