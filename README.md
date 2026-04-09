@@ -13,4 +13,4 @@ This project aims to embed linguistic theory into neural networks via link gramm
    * [Custom Attention Mechanism](./model/LinkGramAttention.py)
    * [Token Transformer Layer](./model/TokenTransformerLayer.py)
 * **Link Grammar Interface**
-    * [Link Grammar API Documentation](./linkgrammar_docs.md)
+    * [Link Grammar API Documentation](./lg_parser/linkgrammar_docs.md)
