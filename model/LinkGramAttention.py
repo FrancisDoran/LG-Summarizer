@@ -123,10 +123,23 @@ def word_to_node():
 def token_to_link():
     pass
 
+def get_query(token):
+    pass
+
+def get_key(token)
+    pass
+
+def get_value(token)
+    pass
+
 def atteniton(tokens, graph, is_linked_bias, link_type_bias_dict):
     c = 0
     for i in tokens:
         for j in tokens:
+
+            qi = get_query(i)
+            kj = get_key(j)
+            vj = get_value(j)
 
             n_i = word_to_node(token_to_word(i))
             n_j = word_to_node(token_to_word(j))
