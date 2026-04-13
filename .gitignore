@@ -8,3 +8,5 @@ bart-large-cnn/
 __pycache__/
 
 .vim/
+
+link-grammar/
