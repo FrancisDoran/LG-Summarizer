@@ -23,6 +23,7 @@ Design...
 """
 
 from collections import deque
+from typing import Optional, Tuple
 
 import linkgrammar as lg
 from linkgrammar import Link, Linkage
@@ -94,17 +95,59 @@ def linkage_to_word_graph(linkage : Linkage, V : int):
     return graph
 
 class LinkGramAttention(nn.Module):
+    """
+    Custom Attention Mechanism for to place within a BART Model.
+    
+    This replaces the standard multi-head self-attention with one that biases
+    attention weights based on link types from a Link Grammar parse.
+    """
 
-    # IMPLEMENT MATH FOR LINKGRAM ATTENTION MECHANISM HERE
-    def __init__(self, input_dim, output_dim):
-        super(LinkGramAttention, self).__init__()
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        num_link_types: int,
+        dropout: float = 0.0,
+        is_decoder: bool = False,
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.dropout = dropout
+        self.head_dim = embed_dim // num_heads
+        assert self.head_dim * num_heads == self.embed_dim, "embed_dim must be divisible by num_heads"
+        self.is_decoder = is_decoder
+        
+        # Scaling factor typically applied to Q
+        self.scaling = self.head_dim ** -0.5
 
-    # Implement forward pass here, make sure this method returns a tensor that matches the shape of the original attention mech.
-    def forward(self, input):
+        # Standard Attention Projections
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        
+        # Link Grammar Bias
+        # Maps integer link IDs to a bias per head
+        # Shape: (num_link_types, num_heads)
+        self.num_link_types = num_link_types
+        self.link_bias = nn.Embedding(num_link_types, num_heads)
 
-        output = None # REPLACE WITH ACTUAL OUTPUT
-        return output
+    def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        key_value_states: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        layer_head_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        
+        # Determine sequence length and batch size
+        bsz, tgt_len, _ = hidden_states.size()
 
 def get_link_type(i : Link, j : Link):
     # bad way to do this, we should be able to establish the correct link based on the relative position of the words
@@ -169,3 +212,34 @@ def attention(tokens, graph, is_linked_bias, link_type_bias_dict):
 
 # this should be moved to the functions that require it, and instantiated as a local variable there.
 total_vertices = len(list(linkage.words()))
+
+def inject_linkgram_attention(model, num_link_types: int):
+    """
+    Utility function to replace all standard BartAttention modules in the encoder 
+    (and optionally decoder) with our custom LinkGramAttention.
+    """
+    config = model.config
+    
+    # We'll replace the encoder's self-attention
+    for layer in model.model.encoder.layers:
+        old_attn = layer.self_attn
+        
+        # Instantiate new attention module
+        new_attn = LinkGramAttention(
+            embed_dim=config.d_model,
+            num_heads=config.encoder_attention_heads,
+            num_link_types=num_link_types,
+            dropout=config.attention_dropout,
+            is_decoder=False,
+        )
+        
+        # Copy pre-trained weights
+        new_attn.k_proj.load_state_dict(old_attn.k_proj.state_dict())
+        new_attn.v_proj.load_state_dict(old_attn.v_proj.state_dict())
+        new_attn.q_proj.load_state_dict(old_attn.q_proj.state_dict())
+        new_attn.out_proj.load_state_dict(old_attn.out_proj.state_dict())
+        
+        # Swap
+        layer.self_attn = new_attn
+
+    print("Successfully injected LinkGramAttention into BART Encoder.")
