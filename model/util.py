@@ -1,26 +1,96 @@
 from collections import deque
 from functools import lru_cache
 import re
-from types import MethodType
 from typing import Sequence
 
 import linkgrammar as lg
-from linkgrammar import Link, Sentence
+from linkgrammar import Sentence
 import torch
 from torch import nn
-from transformers.masking_utils import create_bidirectional_mask
-from transformers.modeling_outputs import BaseModelOutput
+from transformers import AttentionInterface
 
-try:
-    from .LinkGramAttention import LinkGramAttention
-except ImportError:
-    from LinkGramAttention import LinkGramAttention
+from model.model_diag import DiagnosticCapture
 
 #constants
 NO_WORD = -1
 NO_LINK_TYPE = -1
 # this regex splits larger inputs into sentence sized spans before they are passed into link grammar.
 _SENTENCE_BOUNDARY_RE = re.compile(r'(?<=[.!?])\s+(?=(?:["\'])?[A-Z0-9])|\n+')
+
+"""
+Custom Attention Mechanism adhering to Hugging Face's AttentionInterface.
+
+This replaces the standard multi-head self-attention with one that biases
+attention weights using the token distance and link type matrices that come
+from the link grammar parse.
+"""
+def linkgram_attention(
+    module,
+    query,
+    key,
+    value,
+    attention_mask=None,
+    dropout=0.0,
+    scaling=1.0,
+    is_causal=False,
+    **kwargs,
+):
+
+    #Instantiate the diagnostic capture object to log intermediate values for analysis
+    diagnostic_capture = DiagnosticCapture()
+
+    # compute the baseline attention scores
+    attention_scores = torch.matmul(query, key.transpose(-1, -2)) * scaling
+    
+    # if this is an encoder layer and it has our biases attached, apply the link grammar bias
+    if getattr(module, "is_decoder", False) == False and hasattr(module, "distance_bias"):
+        distance = getattr(module, "token_distance_matrix", None)
+        link_type = getattr(module, "token_link_type_matrix", None)
+        
+        if distance is not None and link_type is not None:
+            #ensure matrices are longs
+            distance = distance.long()
+            link_type = link_type.long()
+
+            # use the token distances to gather the learned distance bias for each token pair.
+            valid_distance_mask = distance.ge(0) # ge -> greater than or equal to 
+            distance_ids = distance.clamp(0, module.distance_bias.num_embeddings - 1) # clamp -> limits the values in distance to be between 0 and num_embeddings - 1,
+                                                                                      #        so that they can be used as indices for the embedding lookup.
+            #This gets the "attached" distance bias
+            dist_bias = module.distance_bias(distance_ids) * valid_distance_mask.unsqueeze(-1) # unsqueeze is used here for tensor shaping, 
+            diagnostic_capture.from_tensor(dist_bias, "Link Type Bias")
+                                                                                               #       module.distance_bias is from the injected embedding layer
+            # for directly linked words, add the learned link type bias as well.
+            #       Get the "attached" link type bias
+            direct_link_mask = link_type.ne(NO_LINK_TYPE) # ne -> not equal to
+            valid_link_type_mask = link_type.clamp(0, module.link_type_bias.num_embeddings - 1)
+            #uses link type bias to ensure that only valid link types contribute to the bias
+            link_bias = module.link_type_bias(valid_link_type_mask) * direct_link_mask.unsqueeze(-1)
+            diagnostic_capture.from_tensor(link_bias, "Link Type Bias")
+            
+            # sum the biases and permute to match (batch, heads, seq, seq)
+            total_bias = (dist_bias + link_bias).permute(0, 3, 1, 2)
+            diagnostic_capture.from_tensor(total_bias, "Total Link Bias")
+            attention_scores = attention_scores + total_bias
+
+    # Apply the attention mask if there is one
+    #       In our case there likely won' tbe
+    if attention_mask is not None:
+        attention_scores = attention_scores + attention_mask
+    
+    # softmax and define dropout
+    attention_weights = torch.nn.functional.softmax(attention_scores, dim=-1)
+    attention_probs = torch.nn.functional.dropout(attention_weights, p=dropout, training=module.training)
+
+    # apply the attention weights to the values and project back to the model dimension.
+    #       final step as layed out in project proposal
+    attention_output = torch.matmul(attention_probs, value)
+    attention_output = attention_output.transpose(1, 2).contiguous()
+    
+    return attention_output, None
+
+# register our custom attention globally so it can be "attached" to the model later by name
+AttentionInterface.register("linkgram", linkgram_attention)
 
 """
 Maps tokenizer offsets back to the word indices gathered from the link grammar parse.
@@ -74,7 +144,6 @@ def _build_token_to_word_mapping(
 """
 Builds the token level matrices for one example in the batch.
 
-This function:
 * truncates the raw text to match what the tokenizer kept
 * parses each sentence sized span with link grammar
 * gathers the word level links and word spans
@@ -140,7 +209,7 @@ def _build_single_example_linkgram_matrices(
 
 
 """
-This is a utility function to be run before the model forward pass.
+This is a utility function to be run before the model forward definition.
 
 This not only tokenizes the input text, but also computes the two token level
 matrices that our custom attention mechanism expects.
@@ -194,192 +263,41 @@ def prepare_linkgram_inputs(
     return tokenized, token_distance_matrix, token_link_type_matrix, link_type_to_id
 
 """
-This section patches the forward methods of the encoder and its layers.
-
-This is needed so that token_distance_matrix and token_link_type_matrix can be
-threaded through the normal BART forward path and into our custom attention layer.
-"""
-def _patch_encoder_layer_forward(layer) -> None:
-    if getattr(layer, "_linkgram_forward_patched", False):
-        return
-
-    def forward(
-        self,
-        hidden_states: torch.FloatTensor,
-        attention_mask: torch.FloatTensor,
-        output_attentions: bool | None = False,
-        token_distance_matrix: torch.Tensor | None = None,
-        token_link_type_matrix: torch.Tensor | None = None,
-    ) -> tuple[torch.FloatTensor, torch.FloatTensor | None]:
-        # this follows the original BartEncoderLayer forward logic, but now passes our extra matrices into self_attn.
-        residual = hidden_states
-        hidden_states, attn_weights = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            output_attentions=output_attentions,
-            token_distance_matrix=token_distance_matrix,
-            token_link_type_matrix=token_link_type_matrix,
-        )
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-        hidden_states = self.self_attn_layer_norm(hidden_states)
-
-        residual = hidden_states
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states)
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-        hidden_states = self.final_layer_norm(hidden_states)
-
-        if hidden_states.dtype == torch.float16 and not torch.isfinite(hidden_states).all():
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-
-        outputs = (hidden_states,)
-        if output_attentions:
-            outputs += (attn_weights,)
-
-        return outputs
-
-    # replace the layer forward method in place so the rest of the model can stay unchanged.
-    layer.forward = MethodType(forward, layer)
-    layer._linkgram_forward_patched = True
-
-"""
-This patch does the same thing as the original BartEncoder forward method,
-but also accepts and forwards our token level matrices.
-"""
-def _patch_encoder_forward(encoder) -> None:
-    if getattr(encoder, "_linkgram_forward_patched", False):
-        return
-
-    def forward(
-        self,
-        input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
-        inputs_embeds: torch.FloatTensor | None = None,
-        output_attentions: bool | None = None,
-        output_hidden_states: bool | None = None,
-        return_dict: bool | None = None,
-        token_distance_matrix: torch.Tensor | None = None,
-        token_link_type_matrix: torch.Tensor | None = None,
-        **kwargs,
-    ) -> tuple | BaseModelOutput:
-        # keep the same output flag behavior used by the original encoder implementation.
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            input = input_ids
-            input_ids = input_ids.view(-1, input_ids.shape[-1])
-        elif inputs_embeds is not None:
-            input = inputs_embeds[:, :, -1]
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
-
-        # if embeddings were not passed in directly, gather them from the token ids now.
-        if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
-
-        embed_pos = self.embed_positions(input)
-        embed_pos = embed_pos.to(inputs_embeds.device)
-
-        hidden_states = inputs_embeds + embed_pos
-        hidden_states = self.layernorm_embedding(hidden_states)
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-
-        # create the same bidirectional encoder mask as baseline BART.
-        attention_mask = create_bidirectional_mask(
-            config=self.config,
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-        )
-
-        encoder_states = () if output_hidden_states else None
-        all_attentions = () if output_attentions else None
-
-        # run each encoder layer as usual, but now include the two additional matrices.
-        for encoder_layer in self.layers:
-            if output_hidden_states:
-                encoder_states = encoder_states + (hidden_states,)
-
-            to_drop = False
-            if self.training:
-                dropout_probability = torch.rand([])
-                if dropout_probability < self.layerdrop:
-                    to_drop = True
-
-            if to_drop:
-                layer_outputs = (None, None)
-            else:
-                layer_outputs = encoder_layer(
-                    hidden_states,
-                    attention_mask,
-                    output_attentions=output_attentions,
-                    token_distance_matrix=token_distance_matrix,
-            token_link_type_matrix=token_link_type_matrix,
-        )
-                hidden_states = layer_outputs[0]
-
-            if output_attentions:
-                all_attentions = all_attentions + (layer_outputs[1],)
-
-        if output_hidden_states:
-            encoder_states = encoder_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(v for v in [hidden_states, encoder_states, all_attentions] if v is not None)
-        return BaseModelOutput(
-            last_hidden_state=hidden_states,
-            hidden_states=encoder_states,
-            attentions=all_attentions,
-        )
-
-    # replace the encoder forward method in place so generate() can keep using the same model object.
-    encoder.forward = MethodType(forward, encoder)
-    encoder._linkgram_forward_patched = True
-
-"""
-Utility function to replace all standard BartAttention modules in the encoder 
-(and optionally decoder) with our custom LinkGramAttention.
+Utility function to inject our custom linkgram biases into the encoder's standard BartAttention modules.
 """
 def inject_linkgram_attention(model, num_link_types: int, max_distance: int):
     config = model.config
     encoder = model.model.encoder
-    # patch the encoder once so that it knows how to accept the new arguments.
-    _patch_encoder_forward(encoder)
+    num_heads = config.encoder_attention_heads
     
-    #replace the encoder's self-attention
+    # tell the model to use our custom attention function
+    config._attn_implementation = "linkgram"
+    
+    # attach the bias embeddings directly to the encoder's self-attention modules
     for layer in encoder.layers:
-        old_attn = layer.self_attn
+        attn = layer.self_attn
         
-        # Instantiate new attention module
-        new_attn = LinkGramAttention(
-            embed_dim=config.d_model,
-            num_heads=config.encoder_attention_heads,
-            max_distance=max_distance,
-            num_link_types=num_link_types,
-            dropout=config.attention_dropout,
-            is_decoder=False,
-        )
+        attn.distance_bias = nn.Embedding(max_distance + 1, num_heads)
+        attn.link_type_bias = nn.Embedding(num_link_types, num_heads)
         
-        # Copy pre-trained weights
-        new_attn.copy_projection_weights_from(old_attn)
-        # move the new module onto the same device and dtype as the module it is replacing.
-        new_attn.to(device=old_attn.q_proj.weight.device, dtype=old_attn.q_proj.weight.dtype)
-        # Swap
-        layer.self_attn = new_attn
-        # patch the layer forward so these new arguments continue through the call path.
-        _patch_encoder_layer_forward(layer)
+        # initialize with zeros so it acts exactly like baseline BART before training
+        nn.init.zeros_(attn.distance_bias.weight)
+        nn.init.zeros_(attn.link_type_bias.weight)
+        
+        # Move the embeddings to the same device and dtype as the attention projection weights
+        attn.distance_bias.to(device=attn.q_proj.weight.device, dtype=attn.q_proj.weight.dtype)
+        attn.link_type_bias.to(device=attn.q_proj.weight.device, dtype=attn.q_proj.weight.dtype)
 
-    print("Successfully injected LinkGramAttention into BART Encoder.")
+    print("Successfully injected LinkGram biases into BART Encoder.")
 
+"""
+Attaches the token distance and link type matrices to the encoder's self attention modules
+so they can be read by our custom attention function during the forward pass.
+"""
+def attach_linkgram_matrices(model, token_distance_matrix: torch.Tensor, token_link_type_matrix: torch.Tensor):
+    for layer in model.model.encoder.layers:
+        layer.self_attn.token_distance_matrix = token_distance_matrix
+        layer.self_attn.token_link_type_matrix = token_link_type_matrix
 
 """
 Breadth First Search implementation
@@ -631,20 +549,6 @@ def expand_word_pair_matrices_to_tokens(
         return token_distance_matrix[0], token_link_type_matrix[0]
 
     return token_distance_matrix, token_link_type_matrix
-
-"""
-get link type
-"""
-def get_link_type(i : Link, j : Link):
-    # bad way to do this, we should be able to establish the correct link based on the relative position of the words
-    if i.right_label == j.left_label:
-        return i.right_label
-    if i.left_label == j.right_label:
-        return i.left_label
-    raise ValueError(
-        "Unable to determine link type for links with labels "
-        f"({i.left_label}, {i.right_label}) and ({j.left_label}, {j.right_label})."
-    )
 
 """
 This section configures link grammar parser to output the features we need

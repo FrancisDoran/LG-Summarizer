@@ -2,7 +2,11 @@ import datasets
 import torch
 from transformers import AutoTokenizer, BartForConditionalGeneration
 
-from model.util import inject_linkgram_attention, prepare_linkgram_inputs
+from model.util import (
+    attach_linkgram_matrices,
+    inject_linkgram_attention,
+    prepare_linkgram_inputs,
+)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -16,6 +20,7 @@ MAX_DISTANCE = 10
 
 test_split = datasets.load_dataset(DATASET_ID, DATASET_VERSION, split=TEST_SPLIT)
 
+"""
 print("\r\n")
 print("Dataset format: ")
 print(test_split)
@@ -25,6 +30,7 @@ print("Example Article: ")
 print("\r\n")
 print(test_split[1000]["article"])
 print("\r\n")
+"""
 
 test_article = test_split[1000]["article"]
 
@@ -61,15 +67,15 @@ in this example.
 inject_linkgram_attention(model, max(1, len(link_type_to_id)), MAX_DISTANCE)
 
 """
-Run generation while also passing in the two token level matrices so the
+Run generation after attaching the two token level matrices so the
 encoder can use them when computing attention.
 """
+attach_linkgram_matrices(model, token_distance_matrix, token_link_type_matrix)
+
 with torch.no_grad():
     outputs = model.generate(
         input_ids=tokens["input_ids"],
         attention_mask=tokens["attention_mask"],
-        token_distance_matrix=token_distance_matrix,
-        token_link_type_matrix=token_link_type_matrix,
     )
 
 for item in outputs:
