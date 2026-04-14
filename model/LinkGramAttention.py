@@ -22,28 +22,26 @@ Design...
   the output in a format we define within this same forward method.
 """
 
-import torch
-from torch import nn
-
 from collections import deque
 
 import linkgrammar as lg
-
-from linkgrammar import Linkage
+from linkgrammar import Link, Linkage
+import torch
+from torch import nn
 
 # code adapted from GeeksForGeeks
-def bfs(graph, S, par, dist):
-    # Queue to store the nodes in the order they are visited
-    q = deque()
+def bfs(graph, source, par, dist):
+    # dequeue to store the nodes in the order they are visited
+    _temp_deque = deque()
     # Mark the distance of the source node as 0
-    dist[S] = 0
+    dist[source] = 0
     # Push the source node to the queue
-    q.append(S)
+    _temp_deque.append(source)
 
     # Iterate until the queue is not empty
-    while q:
+    while _temp_deque:
         # Pop the node at the front of the queue
-        node = q.popleft()
+        node = _temp_deque.popleft()
 
         # Explore all the neighbors of the current node
         for neighbor in graph[node]:
@@ -54,17 +52,17 @@ def bfs(graph, S, par, dist):
                 # Mark the distance of the neighboring node as the distance of the current node + 1
                 dist[neighbor] = dist[node] + 1
                 # Insert the neighboring node to the queue
-                q.append(neighbor)
+                _temp_deque.append(neighbor)
 
-def shortest_distance(graph, S, D, V):
+def shortest_distance(graph, source, D, V):
     # par[] array stores the parent of nodes
-    par = [-1] * V
+    parent = [-1] * V
 
     # dist[] array stores the distance of nodes from S
     dist = [float('inf')] * V
 
     # Function call to find the distance of all nodes and their parent nodes
-    bfs(graph, S, par, dist)
+    bfs(graph, source, parent, dist)
 
     return dist[D]
 
@@ -107,7 +105,7 @@ class LinkGramAttention(nn.Module):
         return output
 
 
-def get_link_type(i : link, j : link):
+def get_link_type(i : Link, j : Link):
     # bad way to do this, we should be able to establish the correct link based on the relative position of the words
     if i.right_label == j.left_label:
         return i.right_label
@@ -132,7 +130,7 @@ def get_key(token)
 def get_value(token)
     pass
 
-def atteniton(tokens, graph, is_linked_bias, link_type_bias_dict):
+def attention(tokens, graph, is_linked_bias, link_type_bias_dict):
     c = 0
     for i in tokens:
         for j in tokens:
