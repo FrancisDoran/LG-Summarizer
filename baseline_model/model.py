@@ -27,6 +27,7 @@ TEST_SPLIT = "test"
 
 test_split = datasets.load_dataset(DATASET_ID, DATASET_VERSION, split=TEST_SPLIT)
 
+"""
 print("\r\n")
 print("Dataset format: ")
 print(test_split)
@@ -36,6 +37,7 @@ print("Example Article: ")
 print("\r\n")
 print(test_split[1000]["article"])
 print("\r\n")
+"""
 
 test_article = test_split[1000]["article"]
 
@@ -50,9 +52,11 @@ tensor = tokens["input_ids"].detach().clone().to(DEVICE)
 embeddings = tokenizer.encode(test_article, return_tensors="pt", max_length=512, truncation=True).to(DEVICE)
 outputs = tokenizer.decode(embeddings[0], skip_special_tokens=True)
 
+"""
 print(embeddings)
 print(embeddings.shape)
 print(outputs)
+"""
 
 """
 MODEL
@@ -66,12 +70,12 @@ model = BartForConditionalGeneration.from_pretrained(
     torch_dtype=torch.float32,
 )
 
+"""
 print("\r\n")
 print(model)
 print("\r\n")
-
-
 """
+
 # ensure no gradients are calculated or applied (we are doing inference, not training)
 with torch.no_grad():
     outputs = model.generate(tensor)
@@ -83,4 +87,3 @@ for item in outputs:
 #some debuggng stuff
 #print(model.__class__.__name__)
 #print(model.config.activation_function)
-"""
