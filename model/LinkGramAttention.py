@@ -124,10 +124,10 @@ def token_to_link():
 def get_query(token):
     pass
 
-def get_key(token)
+def get_key(token):
     pass
 
-def get_value(token)
+def get_value(token):
     pass
 
 def attention(tokens, graph, is_linked_bias, link_type_bias_dict):
