@@ -3,169 +3,183 @@ Custom Attention Mechanism for to place within a BART Model.
 
 Here we define the piece of model architecture that we will use to replace the standard attention mechanism found in baseline_model/model.py.
 Essentially, we will be hot-swapping the original attention mechanism with this one.
-
-Because attention mechanisms individually are their own type of neural network, we will need to train our custom mechanism separately
-as the original BART model will come pretrained which is missing from our custom mechanism.
-* We could attempt to port the weights from the original attention mechanism to our custom one,
-  but this is not guaranteed to work and may require additional fine-tuning.
-* If that fails, we can train our custom attention mechanism from scratch using a dataset of input-output pairs that are relevant to our task.
-
-If we choose to train from scratch, it is important to mention this in the final paper. Mentioning procedure, dataset, etc..
-
-Design...
-* Our attention mechanism will be a class that inherits from nn.Module, which is standard practice for PyTorch.
-* Within this class we will define define, in the constructor, the logic for our attention mechanism.
-    * Here we can implement the math from scratch (not terribly difficult with python), or we can use
-      existing PyTorch methods, math modules to speed up the process (Nothing is lost as a result of using
-      built-ins here as far as I know so this is up to developer discretion and will.
-* Finally we will define a forward method which will take in the layer inputs, apply our defined logic to it, and then return
-  the output in a format we define within this same forward method.
 """
 
-from collections import deque
-
-import linkgrammar as lg
-from linkgrammar import Link, Linkage
-import numpy as np
 import torch
 from torch import nn
 
-# code adapted from GeeksForGeeks
-def bfs(graph, source, par, dist):
-    # dequeue to store the nodes in the order they are visited
-    _temp_deque = deque()
-    # Mark the distance of the source node as 0
-    dist[source] = 0
-    # Push the source node to the queue
-    _temp_deque.append(source)
-
-    # Iterate until the queue is not empty
-    while _temp_deque:
-        # Pop the node at the front of the queue
-        node = _temp_deque.popleft()
-
-        # Explore all the neighbors of the current node
-        for neighbor in graph[node]:
-            # Check if the neighboring node is not visited
-            if dist[neighbor] == float('inf'):
-                # Mark the current node as the parent of the neighboring node
-                par[neighbor] = node
-                # Mark the distance of the neighboring node as the distance of the current node + 1
-                dist[neighbor] = dist[node] + 1
-                # Insert the neighboring node to the queue
-                _temp_deque.append(neighbor)
-
-def shortest_distance(graph, source, D, total_vertices):
-    # par[] array stores the parent of nodes
-    parent = [-1] * total_vertices
-
-    # dist[] array stores the distance of nodes from S
-    dist = [float('inf')] * total_vertices
-
-    # Function call to find the distance of all nodes and their parent nodes
-    bfs(graph, source, parent, dist)
-
-    return dist[D]
-
-def linkage_to_word_graph(linkage : Linkage, V : int):
-
-    word_to_node = {}
-    node_to_word = {}
-    i = 0
-
-    for word in linkage.words():
-        word_to_node[word] = i
-        node_to_word[i] = word
-        i += 1
-
-
-    edges = [ [word_to_node[link.left_word], word_to_node[link.right_word]] for link in linkage.links()]
-
-    # Source and Destination vertex
-    S, D = 2, 0
-
-    # List to store the graph as an adjacency list
-    graph = [[] for _ in range(V)]
-
-    for edge in edges:
-        graph[edge[0]].append(edge[1])
-        graph[edge[1]].append(edge[0])
-
-    return graph
+# CONSTANTS
+NO_WORD = -1
+NO_LINK_TYPE = -1
 
 class LinkGramAttention(nn.Module):
 
-    # IMPLEMENT MATH FOR LINKGRAM ATTENTION MECHANISM HERE
-    def __init__(self, input_dim, output_dim):
-        super(LinkGramAttention, self).__init__()
+    """
+    Custom Attention Mechanism for to place within a BART Model.
 
-    # Implement forward pass here, make sure this method returns a tensor that matches the shape of the original attention mech.
-    def forward(self, input):
+    This replaces the standard multi-head self-attention with one that biases
+    attention weights using the token distance and link type matrices that come
+    from the link grammar parse.
+    """
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        max_distance: int,
+        num_link_types: int,
+        dropout: float = 0.0,
+        is_decoder: bool = False,
+        bias: bool = True,
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        # dim(heads) must be divisible by num_heads for multi-head attention to work
+        #       this allows for the parallelization
+        self.head_dim = embed_dim // num_heads
+        self.dropout = dropout
+        self.max_distance = max_distance  # maximum distance for link bias
+        self.num_link_types = num_link_types
+        self.scaling = self.head_dim ** -0.5  # scaling factor for attention scores
 
-        output = None # REPLACE WITH ACTUAL OUTPUT
-        return output
+        #Q, K, V values that will be instantiated with the state of the old attention layers
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        
+        # initialize our trainable biases for distance and link type with zeros
+        self.distance_bias = nn.Embedding(max_distance + 1, num_heads)
+        self.link_type_bias = nn.Embedding(num_link_types, num_heads)
+        nn.init.zeros_(self.distance_bias.weight)
+        nn.init.zeros_(self.link_type_bias.weight)
 
 
-def get_link_type(i : Link, j : Link):
-    # bad way to do this, we should be able to establish the correct link based on the relative position of the words
-    if i.right_label == j.left_label:
-        return i.right_label
-    if i.left_label == j.right_label:
-        return i.left_label
-    raise ValueError(
-        "Unable to determine link type for links with labels "
-        f"({i.left_label}, {i.right_label}) and ({j.left_label}, {j.right_label})."
-    )
+    """
+    Utility methods for the attention mechanism.
+    """
+    # copies attention module weights from arg: attention_module
+    def copy_projection_weights_from(self, attention_module: nn.Module) -> None:
+        self.q_proj.load_state_dict(attention_module.q_proj.state_dict())
+        self.k_proj.load_state_dict(attention_module.k_proj.state_dict())
+        self.v_proj.load_state_dict(attention_module.v_proj.state_dict())
+        self.out_proj.load_state_dict(attention_module.out_proj.state_dict())
 
-def token_to_word():
-    pass
+    def build_attention_bias(
+        self,
+        token_distance_matrix: torch.Tensor,
+        token_link_type_matrix: torch.Tensor,
+        no_link_type: int = NO_LINK_TYPE,
+    ) -> torch.Tensor:
+        # the two matrices describe the same token pairs, so they must be the same shape.
+        if token_distance_matrix.shape != token_link_type_matrix.shape:
+            raise ValueError("token_distance_matrix and token_link_type_matrix must have the same shape")
 
-def word_to_node():
-    pass
+        # allow either a single example matrix or a full batch of matrices.
+        if token_distance_matrix.ndim == 2:
+            token_distance_matrix = token_distance_matrix.unsqueeze(0)
+            token_link_type_matrix = token_link_type_matrix.unsqueeze(0)
+        elif token_distance_matrix.ndim != 3:
+            raise ValueError("token pair matrices must have shape (seq_len, seq_len) or (batch_size, seq_len, seq_len)")
 
-def token_to_link():
-    pass
+        # use the token distances to gather the learned distance bias for each token pair.
+        valid_distance_mask = token_distance_matrix.ge(0)
+        distance_ids = token_distance_matrix.clamp(0, self.max_distance)
+        bias = self.distance_bias(distance_ids) * valid_distance_mask.unsqueeze(-1)
 
-def get_query(token):
-    pass
+        # for directly linked words, add the learned link type bias as well.
+        direct_link_mask = token_link_type_matrix.ne(no_link_type)
+        if torch.any(direct_link_mask):
+            invalid_link_types = token_link_type_matrix[direct_link_mask]
+            if torch.any(invalid_link_types < 0) or torch.any(invalid_link_types >= self.num_link_types):
+                raise ValueError("token_link_type_matrix contains an out-of-range link type id")
 
-def get_key(token):
-    pass
+            safe_link_ids = token_link_type_matrix.clamp(0, self.num_link_types - 1)
+            bias = bias + self.link_type_bias(safe_link_ids) * direct_link_mask.unsqueeze(-1)
 
-def get_value(token):
-    pass
+        return bias.permute(0, 3, 1, 2).contiguous()
+    
+    # see the shape of the output of the projection layeres
+    def _shape(self, tensor: torch.Tensor, batch_size: int, seq_len: int):
+        return tensor.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+    
+    """
+    Public interface for the attention mechanism.
 
-# .shape is only available for values that are tensors/np arrays or that
-#       are implemented as children of those types
-def attention(tokens, graph, is_linked_bias, link_type_bias_dict):
-    c = 0
-    for i in tokens:
-        for j in tokens:
+    Inputs and Outputs for the layer.
+    """
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        token_distance_matrix: torch.Tensor | None = None,
+        token_link_type_matrix: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        output_attentions: bool = False,
+        no_link_type: int = NO_LINK_TYPE,
+        **_: object,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
 
-            qi = get_query(i)
-            kj = get_key(j)
-            vj = get_value(j)
+        """
+        enforces and defines the expected shapes of input/output tensors.
+        """
+        if hidden_states.ndim != 3:
+            raise ValueError("hidden_states must have shape (batch_size, seq_len, embed_dim)")
+        batch_size, seq_len, embed_dim = hidden_states.shape
+        if embed_dim != self.embed_dim:
+            raise ValueError(f"expected hidden size {self.embed_dim}, got {embed_dim}")
 
-            n_i = word_to_node(token_to_word(i))
-            n_j = word_to_node(token_to_word(j))
+        """
+        If no token level features are passed in, build neutral matrices so the
+        layer still behaves like normal attention.
+        
+        If the matrices are passed in, move them onto the same device as the
+        hidden states before using them.
+        """
+        if token_distance_matrix is None and token_link_type_matrix is None:
+            token_distance_matrix = torch.full(
+                (batch_size, seq_len, seq_len),
+                -1,
+                dtype=torch.long,
+                device=hidden_states.device,
+            )
+            token_link_type_matrix = torch.full(
+                (batch_size, seq_len, seq_len),
+                no_link_type,
+                dtype=torch.long,
+                device=hidden_states.device,
+            )
+        elif token_distance_matrix is None or token_link_type_matrix is None:
+            raise ValueError("token_distance_matrix and token_link_type_matrix must be provided together")
+        else:
+            token_distance_matrix = token_distance_matrix.to(hidden_states.device)
+            token_link_type_matrix = token_link_type_matrix.to(hidden_states.device)
 
-            g = shortest_distance(graph, n_i, n_j)
-            
-            # is_linked_bias is a trainable parameter
-            sij = (qi @ kj)/np.sqrt(kj.shape[0]) + is_linked_bias/(g+1)
+        # project the hidden states into Q, K, and V and reshape for multi-head attention.
+        query_states = self._shape(self.q_proj(hidden_states), batch_size, seq_len)
+        key_states = self._shape(self.k_proj(hidden_states), batch_size, seq_len)
+        value_states = self._shape(self.v_proj(hidden_states), batch_size, seq_len)
 
-            m = torch.nn.Softmax()
-            alpha = m(sij)
+        # compute the baseline attention scores and then add the link grammar bias.
+        attention_scores = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.scaling
+        attention_scores = attention_scores + self.build_attention_bias(
+            token_distance_matrix,
+            token_link_type_matrix,
+            no_link_type=no_link_type,
+        )
+        
+        # Apply the attention mask if there is one
+        if attention_mask is not None:
+            attention_scores = attention_scores + attention_mask
 
-            if g == 1:
-                r = link_type_bias_dict[token_to_link(i,j)]
-            else:
-                r = np.zeros(vj.shape())
+        attention_weights = torch.nn.functional.softmax(attention_scores, dim=-1)
+        attention_probs = torch.nn.functional.dropout(attention_weights, p=self.dropout, training=self.training)
 
-            vrj = vj + r
+        # apply the attention weights to the values and project back to the model dimension.
+        attention_output = torch.matmul(attention_probs, value_states)
+        attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.embed_dim)
+        attention_output = self.out_proj(attention_output)
 
-            c += alpha*vrj
-    return c
+        if output_attentions:
+            return attention_output, attention_weights
 
-# this should be moved to the functions that require it, and instantiated as a local variable there.
-total_vertices = len(list(linkage.words()))
+        return attention_output, None
