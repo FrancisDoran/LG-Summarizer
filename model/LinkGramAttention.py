@@ -112,6 +112,10 @@ def get_link_type(i : Link, j : Link):
         return i.right_label
     if i.left_label == j.right_label:
         return i.left_label
+    raise ValueError(
+        "Unable to determine link type for links with labels "
+        f"({i.left_label}, {i.right_label}) and ({j.left_label}, {j.right_label})."
+    )
 
 def token_to_word():
     pass
