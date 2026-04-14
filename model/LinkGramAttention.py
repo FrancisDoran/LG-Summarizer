@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """
 Custom Attention Mechanism for to place within a BART Model.
 
@@ -94,12 +93,6 @@ def linkage_to_word_graph(linkage : Linkage, V : int):
         graph[edge[1]].append(edge[0])
 
     return graph
-=======
-from typing import Optional, Tuple
-
-import torch
-from torch import nn
->>>>>>> da5a4f0 (refining custom link gram attention module implementation)
 
 class LinkGramAttention(nn.Module):
     """
@@ -144,7 +137,6 @@ class LinkGramAttention(nn.Module):
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
-<<<<<<< HEAD
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -155,9 +147,6 @@ class LinkGramAttention(nn.Module):
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         
-        # Determine sequence length and batch size
-        bsz, tgt_len, _ = hidden_states.size()
-
 def get_link_type(i : Link, j : Link):
     # bad way to do this, we should be able to establish the correct link based on the relative position of the words
     if i.right_label == j.left_label:
@@ -222,8 +211,6 @@ def attention(tokens, graph, is_linked_bias, link_type_bias_dict):
 # this should be moved to the functions that require it, and instantiated as a local variable there.
 total_vertices = len(list(linkage.words()))
 
-=======
->>>>>>> da5a4f0 (refining custom link gram attention module implementation)
 def inject_linkgram_attention(model, num_link_types: int):
     """
     Utility function to replace all standard BartAttention modules in the encoder 
