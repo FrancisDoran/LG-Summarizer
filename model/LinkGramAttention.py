@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 """
 Custom Attention Mechanism for to place within a BART Model.
 
@@ -93,6 +94,12 @@ def linkage_to_word_graph(linkage : Linkage, V : int):
         graph[edge[1]].append(edge[0])
 
     return graph
+=======
+from typing import Optional, Tuple
+
+import torch
+from torch import nn
+>>>>>>> da5a4f0 (refining custom link gram attention module implementation)
 
 class LinkGramAttention(nn.Module):
     """
@@ -114,13 +121,14 @@ class LinkGramAttention(nn.Module):
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.dropout = dropout
+
+        # this division of d_model into num_heads is industry standard for multi-head attention implementations
+        #       It allows each head to play an equal part in calculating the next token representation,
+        #       and ensures that the total dimensionality of the model is preserved after concatenating the heads.
         self.head_dim = embed_dim // num_heads
         assert self.head_dim * num_heads == self.embed_dim, "embed_dim must be divisible by num_heads"
         self.is_decoder = is_decoder
         
-        # Scaling factor typically applied to Q
-        self.scaling = self.head_dim ** -0.5
-
         # Standard Attention Projections
         self.k_proj = nn.Linear(embed_dim, embed_dim)
         self.v_proj = nn.Linear(embed_dim, embed_dim)
@@ -128,14 +136,15 @@ class LinkGramAttention(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
         
         # Link Grammar Bias
-        # Maps integer link IDs to a bias per head
         # Shape: (num_link_types, num_heads)
         self.num_link_types = num_link_types
+        # trained embedding layer that maps each link type to a bias vector for each attention head
         self.link_bias = nn.Embedding(num_link_types, num_heads)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
+<<<<<<< HEAD
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -213,6 +222,8 @@ def attention(tokens, graph, is_linked_bias, link_type_bias_dict):
 # this should be moved to the functions that require it, and instantiated as a local variable there.
 total_vertices = len(list(linkage.words()))
 
+=======
+>>>>>>> da5a4f0 (refining custom link gram attention module implementation)
 def inject_linkgram_attention(model, num_link_types: int):
     """
     Utility function to replace all standard BartAttention modules in the encoder 
