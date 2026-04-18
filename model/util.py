@@ -5,11 +5,11 @@ from typing import Sequence
 
 import linkgrammar as lg
 from linkgrammar import Sentence
+
+from model.model_diag import DiagnosticCapture
 import torch
 from torch import nn
 from transformers import AttentionInterface
-
-from model.model_diag import DiagnosticCapture
 
 #constants
 NO_WORD = -1
@@ -18,6 +18,28 @@ NO_LINK_TYPE = -1
 _SENTENCE_BOUNDARY_RE = re.compile(r'(?<=[.!?])\s+(?=(?:["\'])?[A-Z0-9])|\n+')
 
 """
+Notes on batching:
+
+Normally a batch would imply multiple full text examples being processed together.
+
+But here, since the link grammar parsing by default operates on a sentence at a time,
+we treat each sentence as its own batch.
+
+1 Batch
+---------------------
+Originally one full text prompt -> is now one sentence "span"
+
+This may cause some difficulties with organizing a training regement since it's typical
+to train on multiple full examples each representing a batch. So it may be necessary to
+reorganize the training loop to accommodate this, or to find a way to batch multiple sentences together.
+But we can take a look at that when it comes up.
+"""
+
+"""
+-----------------------------------------------------------------------
+ATTENTION MECHANISM
+-----------------------------------------------------------------------
+
 Custom Attention Mechanism adhering to Hugging Face's AttentionInterface.
 
 This replaces the standard multi-head self-attention with one that biases
@@ -25,14 +47,23 @@ attention weights using the token distance and link type matrices that come
 from the link grammar parse.
 """
 def linkgram_attention(
+    #reference to the current module
     module,
+    #query is passed automatically on use
     query,
+    #key is passed automatically on use
     key,
+    #value is passed automatically on use
     value,
+    #optional: may want to use if we want to train via attention masking
     attention_mask=None,
+    #largely irrelevant in our use case, just passing it in to adhere to the expected interface
     dropout=0.0,
     scaling=1.0,
     is_causal=False,
+    #IMPORTANT: used to pass in our custom link grammar features, and
+    #       also contains model relevant data which is passed from module to module
+    #       during inference and training
     **kwargs,
 ):
 
@@ -92,54 +123,12 @@ def linkgram_attention(
 # register our custom attention globally so it can be "attached" to the model later by name
 AttentionInterface.register("linkgram", linkgram_attention)
 
+
 """
-Maps tokenizer offsets back to the word indices gathered from the link grammar parse.
-
-If a token does not overlap any parsed word, it will remain as NO_WORD.
+-----------------------------------------------------------------------
+TENSOR MAPPING INTERFACE
+-----------------------------------------------------------------------
 """
-def _build_token_to_word_mapping(
-    offset_mapping: torch.Tensor,
-    word_spans: list[tuple[int, int]],
-    device: torch.device,
-) -> torch.Tensor:
-    token_to_word = torch.full((offset_mapping.shape[0],), NO_WORD, dtype=torch.long, device=device)
-    if not word_spans:
-        return token_to_word
-
-    candidate_start = 0
-    for token_index, (token_start, token_end) in enumerate(offset_mapping.tolist()):
-        # skip special tokens and padding which are represented by empty spans.
-        if token_start >= token_end:
-            continue
-
-        # move forward until we are near the first word span that could overlap this token.
-        while candidate_start < len(word_spans) and word_spans[candidate_start][1] <= token_start:
-            candidate_start += 1
-
-        best_word_index = NO_WORD
-        best_overlap = 0
-        probe_index = max(0, candidate_start - 1)
-
-        # look at the nearby word spans and choose the one with the greatest overlap.
-        while probe_index < len(word_spans):
-            word_start, word_end = word_spans[probe_index]
-            if word_start >= token_end and best_overlap > 0:
-                break
-
-            overlap = min(token_end, word_end) - max(token_start, word_start)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_word_index = probe_index
-
-            if word_start > token_end:
-                break
-            probe_index += 1
-
-        if best_word_index != NO_WORD:
-            token_to_word[token_index] = best_word_index
-
-    return token_to_word
-
 
 """
 Builds the token level matrices for one example in the batch.
@@ -207,6 +196,80 @@ def _build_single_example_linkgram_matrices(
         word_link_type_matrix,
     )
 
+"""
+-----------------------------------------------------------------------
+TENSOR MAPPING UTILS
+-----------------------------------------------------------------------
+called from the tensor mapping interface
+
+"""
+
+"""
+Maps tokenizer offsets back to the word indices gathered from the link grammar parse.
+    * If a token does not overlap any parsed word, it will remain as NO_WORD.
+
+ex...
+
+original text (sentence in our case): "This food tastes unbelievable."
+tokenization: ["This", "food", "tastes", "un", "believable", "."]
+    * note: the way we parse w/ lg rn removes punctuation, something to be worked on
+    * although we don't factor in punctuation for link grammar, it still gets factored in by the model itself
+
+resulting map: [0, 1, 2, 3, 3, NO_WORD]
+
+this mapping is used later as a mask to expand the word level link grammar features
+into their respective token level tensor formats
+"""
+def _build_token_to_word_mapping(
+    offset_mapping: torch.Tensor,
+    word_spans: list[tuple[int, int]],
+    device: torch.device,
+) -> torch.Tensor:
+    token_to_word = torch.full((offset_mapping.shape[0],), NO_WORD, dtype=torch.long, device=device)
+    if not word_spans:
+        return token_to_word
+
+    candidate_start = 0
+    for token_index, (token_start, token_end) in enumerate(offset_mapping.tolist()):
+        # skip special tokens and padding which are represented by empty spans.
+        if token_start >= token_end:
+            continue
+
+        # move forward until we are near the first word span that could overlap this token.
+        while candidate_start < len(word_spans) and word_spans[candidate_start][1] <= token_start:
+            candidate_start += 1
+
+        best_word_index = NO_WORD
+        best_overlap = 0
+        probe_index = max(0, candidate_start - 1)
+
+        # look at the nearby word spans and choose the one with the greatest overlap.
+        while probe_index < len(word_spans):
+            word_start, word_end = word_spans[probe_index]
+            if word_start >= token_end and best_overlap > 0:
+                break
+
+            overlap = min(token_end, word_end) - max(token_start, word_start)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_word_index = probe_index
+
+            if word_start > token_end:
+                break
+            probe_index += 1
+
+        if best_word_index != NO_WORD:
+            token_to_word[token_index] = best_word_index
+
+    return token_to_word
+
+"""
+-----------------------------------------------------------------------
+INFERENCE TIME INTERFACE
+-----------------------------------------------------------------------
+
+These are methods called when we perform inference or training
+"""
 
 """
 This is a utility function to be run before the model forward definition.
@@ -220,7 +283,9 @@ def prepare_linkgram_inputs(
     *,
     max_length: int,
     max_distance: int,
+    #optional
     device: torch.device | str | None = None,
+    #optional
     link_type_to_id: dict[tuple[str, str], int] | None = None,
 ):
     # if a single string is passed in, wrap it so that the rest of the function can treat it like a batch.
@@ -551,8 +616,11 @@ def expand_word_pair_matrices_to_tokens(
     return token_distance_matrix, token_link_type_matrix
 
 """
-This section configures link grammar parser to output the features we need
+-----------------------------------------------------------------------
+LINKGRAM PARSING UTILS
+-----------------------------------------------------------------------
 """
+
 #memoize loading of the link grammar dictionary and parse options
 @lru_cache(maxsize=1)
 def _get_linkgrammar_runtime() -> tuple[lg.Dictionary, lg.ParseOptions]:

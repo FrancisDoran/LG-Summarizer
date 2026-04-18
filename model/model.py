@@ -1,12 +1,11 @@
 import datasets
-import torch
-from transformers import AutoTokenizer, BartForConditionalGeneration
-
 from model.util import (
     attach_linkgram_matrices,
     inject_linkgram_attention,
     prepare_linkgram_inputs,
 )
+import torch
+from transformers import AutoTokenizer, BartForConditionalGeneration
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
