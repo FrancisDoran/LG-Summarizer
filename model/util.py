@@ -244,8 +244,9 @@ def _bfs_distances(adjacency: list[list[int]], source: int, unreachable_distance
 
 """
 Maps tokenizer offsets back to the word indices gathered from the link grammar parse.
+    * does this by checking how much overlap there is between the characters of the word and the characters of the token
     * If a token does not overlap any parsed word, it will remain as NO_WORD.
-
+-------------------------------------------------------------------------------------------------------
 ex...
 
 original text (sentence in our case): "This food tastes unbelievable."
@@ -254,39 +255,61 @@ tokenization: ["This", "food", "tastes", "un", "believable", "."]
     * although we don't factor in punctuation for link grammar, it still gets factored in by the model itself
 
 resulting map: [0, 1, 2, 3, 3, NO_WORD]
-
+-------------------------------------------------------------------------------------------------------
 this mapping is used later as a mask to expand the word level link grammar features
 into their respective token level tensor formats
+
+would ordered traversal be better?
 """
 def _build_token_to_word_mapping(
+    #offset_mapping contains character start and end positions of each token in the original text, index is the token number, value is (char_start, char_end)
+    #    * in our case we parse each sentence separately, so the offsets are relative to the start of the sentence span
     offset_mapping: torch.Tensor,
     word_spans: list[tuple[int, int]],
     device: torch.device,
 ) -> torch.Tensor:
+    #allocate a tensor
     token_to_word = torch.full((offset_mapping.shape[0],), NO_WORD, dtype=torch.long, device=device)
+    #if no word spans parsed, return the placeholder tensor (attention bias will have no effect)
     if not word_spans:
         return token_to_word
-
+    
+    #loop primer, keeps track of current word span being looked at
     candidate_start = 0
+    # iterate collecting elements in the form returned by the tokenizer when we set return_offsets_mapping=True,
+    #       which gives us the character start and end positions of each token in the original text.
     for token_index, (token_start, token_end) in enumerate(offset_mapping.tolist()):
         # skip special tokens and padding which are represented by empty spans.
         if token_start >= token_end:
             continue
 
-        # move forward until we are near the first word span that could overlap this token.
+        """
+        This loop keeps the current word being looked at, and the current token being looked at, aligned.
+
+        The original for loop itself does not increment candidate_start (the current word) in order to allow for multiple tokens in a row
+        to be properly matched with the correct word (subword token cases)
+
+        So we have a value representing the current word, and increment it only in the event that the current token starts after the end of the current word, which means we need to move on to the next word.
+        """
         while candidate_start < len(word_spans) and word_spans[candidate_start][1] <= token_start:
             candidate_start += 1
-
+        
+        #current best word index
         best_word_index = NO_WORD
+        #current best overlap
         best_overlap = 0
         probe_index = max(0, candidate_start - 1)
-
-        # look at the nearby word spans and choose the one with the greatest overlap.
+        
+        # iterate over the words
         while probe_index < len(word_spans):
+            # for each word, get the first and last character positions of the word in the original sentence
             word_start, word_end = word_spans[probe_index]
+            # again, this is for subword token cases. While looping through the words, if we find a word that starts after the current token ends,
+            #       then we have encountered the end of a sub token and should break.
             if word_start >= token_end and best_overlap > 0:
                 break
-
+            
+            #compute the chracter overlap between token and word, and update the current best placeholders above
             overlap = min(token_end, word_end) - max(token_start, word_start)
             if overlap > best_overlap:
                 best_overlap = overlap
@@ -295,10 +318,12 @@ def _build_token_to_word_mapping(
             if word_start > token_end:
                 break
             probe_index += 1
-
+        
+        # after looping through the words, if we have found any overlap at all, assign the token to the best word index found.
         if best_word_index != NO_WORD:
             token_to_word[token_index] = best_word_index
 
+    # return the found mapping
     return token_to_word
 
 """
@@ -364,6 +389,7 @@ def build_word_pair_matrices(
 
         adjacency[left_word].append(right_word)
         adjacency[right_word].append(left_word)
+        #Square matrix where each entry (i, j) corresponds to the link type between word i and word j, or NO_LINK_TYPE if there is no link.
         link_type_matrix[left_word, right_word] = link_type_id
         link_type_matrix[right_word, left_word] = link_type_id
 
@@ -523,6 +549,8 @@ def expand_word_pair_matrices_to_tokens(
         token_distance_matrix[batch_idx][valid_positions[:, None], valid_positions[None, :]] = (
             word_distance_matrix[batch_idx][word_ids[:, None], word_ids[None, :]]
         )
+        # link types are stored as they are encountered in the link grammar parse
+        # normalization of the link types is learned by the Embedding layer we use to represent the biases.
         token_link_type_matrix[batch_idx][valid_positions[:, None], valid_positions[None, :]] = (
             word_link_type_matrix[batch_idx][word_ids[:, None], word_ids[None, :]]
         )
