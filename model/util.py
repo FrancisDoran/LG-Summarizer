@@ -205,6 +205,44 @@ called from the tensor mapping interface
 """
 
 """
+Breadth First Search implementation
+
+Used to compute the distance between each pair of words in the lg parse.
+We incorporate distance into the bias we add to the attention scores.
+
+args:
+    adjacency:
+        [node_index, [neighbor_indices]]
+    source:
+        starting node
+    unreachable_distance:
+        fallback value
+"""
+def _bfs_distances(adjacency: list[list[int]], source: int, unreachable_distance: int) -> list[int]:
+    # allocate a list the same size as adjacency arg, and fill it with -1 (placeholder)
+    distances = [-1] * len(adjacency)
+    distances[source] = 0
+    #deque with first node appended, deque allows for efficient pops from the left
+    queue = deque([source])
+
+    while queue:
+        #get first element from left
+        node = queue.popleft()
+        #use passed in adjacency to loop through the neighbors of current node
+        for neighbor in adjacency[node]:
+            #skip if already visited
+            if distances[neighbor] != -1:
+                continue
+            
+            #otherwise assign it the distance of the the current source node + 1 (1 step further in the graph)
+            distances[neighbor] = distances[node] + 1
+            #add current children to the deque to be traversed
+            queue.append(neighbor)
+    
+    # for any nodes not traversed, assign the fallback unreachable_distance value passed in, otherwise return the distance calculated above
+    return [unreachable_distance if distance == -1 else distance for distance in distances]
+
+"""
 Maps tokenizer offsets back to the word indices gathered from the link grammar parse.
     * If a token does not overlap any parsed word, it will remain as NO_WORD.
 
@@ -262,126 +300,6 @@ def _build_token_to_word_mapping(
             token_to_word[token_index] = best_word_index
 
     return token_to_word
-
-"""
------------------------------------------------------------------------
-INFERENCE TIME INTERFACE
------------------------------------------------------------------------
-
-These are methods called when we perform inference or training
-"""
-
-"""
-This is a utility function to be run before the model forward definition.
-
-This not only tokenizes the input text, but also computes the two token level
-matrices that our custom attention mechanism expects.
-"""
-def prepare_linkgram_inputs(
-    texts: str | Sequence[str],
-    tokenizer,
-    *,
-    max_length: int,
-    max_distance: int,
-    #optional
-    device: torch.device | str | None = None,
-    #optional
-    link_type_to_id: dict[tuple[str, str], int] | None = None,
-):
-    # if a single string is passed in, wrap it so that the rest of the function can treat it like a batch.
-    batch_texts = [texts] if isinstance(texts, str) else list(texts)
-    tokenized = tokenizer(
-        batch_texts,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-        max_length=max_length,
-        return_offsets_mapping=True,
-    )
-
-    # build the matrices on the same device that they will later be used on.
-    matrix_device = torch.device(device) if device is not None else tokenized["input_ids"].device
-    link_type_to_id = {} if link_type_to_id is None else link_type_to_id
-    token_distance_matrices = []
-    token_link_type_matrices = []
-
-    # compute the token level features for each example separately and then stack them back into a batch.
-    for batch_index, text in enumerate(batch_texts):
-        token_distance_matrix, token_link_type_matrix = _build_single_example_linkgram_matrices(
-            text=text,
-            offset_mapping=tokenized["offset_mapping"][batch_index],
-            max_distance=max_distance,
-            device=matrix_device,
-            link_type_to_id=link_type_to_id,
-        )
-        token_distance_matrices.append(token_distance_matrix)
-        token_link_type_matrices.append(token_link_type_matrix)
-
-    # offset_mapping is only needed for feature construction, so remove it before returning.
-    token_distance_matrix = torch.stack(token_distance_matrices, dim=0)
-    token_link_type_matrix = torch.stack(token_link_type_matrices, dim=0)
-    tokenized.pop("offset_mapping")
-
-    if device is not None:
-        tokenized = tokenized.to(device)
-
-    return tokenized, token_distance_matrix, token_link_type_matrix, link_type_to_id
-
-"""
-Utility function to inject our custom linkgram biases into the encoder's standard BartAttention modules.
-"""
-def inject_linkgram_attention(model, num_link_types: int, max_distance: int):
-    config = model.config
-    encoder = model.model.encoder
-    num_heads = config.encoder_attention_heads
-    
-    # tell the model to use our custom attention function
-    config._attn_implementation = "linkgram"
-    
-    # attach the bias embeddings directly to the encoder's self-attention modules
-    for layer in encoder.layers:
-        attn = layer.self_attn
-        
-        attn.distance_bias = nn.Embedding(max_distance + 1, num_heads)
-        attn.link_type_bias = nn.Embedding(num_link_types, num_heads)
-        
-        # initialize with zeros so it acts exactly like baseline BART before training
-        nn.init.zeros_(attn.distance_bias.weight)
-        nn.init.zeros_(attn.link_type_bias.weight)
-        
-        # Move the embeddings to the same device and dtype as the attention projection weights
-        attn.distance_bias.to(device=attn.q_proj.weight.device, dtype=attn.q_proj.weight.dtype)
-        attn.link_type_bias.to(device=attn.q_proj.weight.device, dtype=attn.q_proj.weight.dtype)
-
-    print("Successfully injected LinkGram biases into BART Encoder.")
-
-"""
-Attaches the token distance and link type matrices to the encoder's self attention modules
-so they can be read by our custom attention function during the forward pass.
-"""
-def attach_linkgram_matrices(model, token_distance_matrix: torch.Tensor, token_link_type_matrix: torch.Tensor):
-    for layer in model.model.encoder.layers:
-        layer.self_attn.token_distance_matrix = token_distance_matrix
-        layer.self_attn.token_link_type_matrix = token_link_type_matrix
-
-"""
-Breadth First Search implementation
-"""
-def _bfs_distances(adjacency: list[list[int]], source: int, unreachable_distance: int) -> list[int]:
-    distances = [-1] * len(adjacency)
-    distances[source] = 0
-    queue = deque([source])
-
-    while queue:
-        node = queue.popleft()
-        for neighbor in adjacency[node]:
-            if distances[neighbor] != -1:
-                continue
-
-            distances[neighbor] = distances[node] + 1
-            queue.append(neighbor)
-
-    return [unreachable_distance if distance == -1 else distance for distance in distances]
 
 """
 This function builds adjacency matrices for two relationships...
@@ -614,6 +532,108 @@ def expand_word_pair_matrices_to_tokens(
         return token_distance_matrix[0], token_link_type_matrix[0]
 
     return token_distance_matrix, token_link_type_matrix
+
+"""
+-----------------------------------------------------------------------
+INFERENCE TIME INTERFACE
+-----------------------------------------------------------------------
+
+These are methods called when we perform inference or training
+"""
+
+"""
+This is a utility function to be run before the model forward definition.
+
+This not only tokenizes the input text, but also computes the two token level
+matrices that our custom attention mechanism expects.
+"""
+def prepare_linkgram_inputs(
+    texts: str | Sequence[str],
+    tokenizer,
+    *,
+    max_length: int,
+    max_distance: int,
+    #optional
+    device: torch.device | str | None = None,
+    #optional
+    link_type_to_id: dict[tuple[str, str], int] | None = None,
+):
+    # if a single string is passed in, wrap it so that the rest of the function can treat it like a batch.
+    batch_texts = [texts] if isinstance(texts, str) else list(texts)
+    tokenized = tokenizer(
+        batch_texts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=max_length,
+        return_offsets_mapping=True,
+    )
+
+    # build the matrices on the same device that they will later be used on.
+    matrix_device = torch.device(device) if device is not None else tokenized["input_ids"].device
+    link_type_to_id = {} if link_type_to_id is None else link_type_to_id
+    token_distance_matrices = []
+    token_link_type_matrices = []
+
+    # compute the token level features for each example separately and then stack them back into a batch.
+    for batch_index, text in enumerate(batch_texts):
+        token_distance_matrix, token_link_type_matrix = _build_single_example_linkgram_matrices(
+            text=text,
+            offset_mapping=tokenized["offset_mapping"][batch_index],
+            max_distance=max_distance,
+            device=matrix_device,
+            link_type_to_id=link_type_to_id,
+        )
+        token_distance_matrices.append(token_distance_matrix)
+        token_link_type_matrices.append(token_link_type_matrix)
+
+    # offset_mapping is only needed for feature construction, so remove it before returning.
+    token_distance_matrix = torch.stack(token_distance_matrices, dim=0)
+    token_link_type_matrix = torch.stack(token_link_type_matrices, dim=0)
+    tokenized.pop("offset_mapping")
+
+    if device is not None:
+        tokenized = tokenized.to(device)
+
+    return tokenized, token_distance_matrix, token_link_type_matrix, link_type_to_id
+
+"""
+Utility function to inject our custom linkgram biases into the encoder's standard BartAttention modules.
+"""
+def inject_linkgram_attention(model, num_link_types: int, max_distance: int):
+    config = model.config
+    encoder = model.model.encoder
+    num_heads = config.encoder_attention_heads
+    
+    # tell the model to use our custom attention function
+    config._attn_implementation = "linkgram"
+    
+    # attach the bias embeddings directly to the encoder's self-attention modules
+    for layer in encoder.layers:
+        attn = layer.self_attn
+        
+        attn.distance_bias = nn.Embedding(max_distance + 1, num_heads)
+        attn.link_type_bias = nn.Embedding(num_link_types, num_heads)
+        
+        # initialize with zeros so it acts exactly like baseline BART before training
+        nn.init.zeros_(attn.distance_bias.weight)
+        nn.init.zeros_(attn.link_type_bias.weight)
+        
+        # Move the embeddings to the same device and dtype as the attention projection weights
+        attn.distance_bias.to(device=attn.q_proj.weight.device, dtype=attn.q_proj.weight.dtype)
+        attn.link_type_bias.to(device=attn.q_proj.weight.device, dtype=attn.q_proj.weight.dtype)
+
+    print("Successfully injected LinkGram biases into BART Encoder.")
+
+"""
+Attaches the token distance and link type matrices to the encoder's self attention modules
+so they can be read by our custom attention function during the forward pass.
+"""
+def attach_linkgram_matrices(model, token_distance_matrix: torch.Tensor, token_link_type_matrix: torch.Tensor):
+    for layer in model.model.encoder.layers:
+        layer.self_attn.token_distance_matrix = token_distance_matrix
+        layer.self_attn.token_link_type_matrix = token_link_type_matrix
+
 
 """
 -----------------------------------------------------------------------
