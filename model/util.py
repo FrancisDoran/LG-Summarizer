@@ -59,6 +59,7 @@ def linkgram_attention(
     attention_mask=None,
     #largely irrelevant in our use case, just passing it in to adhere to the expected interface
     dropout=0.0,
+    #this is passed by the model, and represents the sqrt(d_k) factor from the attention formula
     scaling=1.0,
     is_causal=False,
     #IMPORTANT: used to pass in our custom link grammar features, and
@@ -155,6 +156,7 @@ def _build_single_example_linkgram_matrices(
     )
 
     # the tokenizer may truncate the text, so only parse the region that still has tokens.
+    # this avoids computing features/matrices for text that is ignored by the model from the start.
     max_char_end = int(offset_mapping[:, 1].max().item()) if seq_len > 0 else 0
     truncated_text = text[:max_char_end]
     if not truncated_text.strip():
@@ -164,6 +166,7 @@ def _build_single_example_linkgram_matrices(
     links: list[tuple[int, int, int]] = []
 
     # parse each sentence sized span separately so that we do not create links across sentence boundaries.
+    #       uses the lg parser utils defined at bottom of file
     for sentence_start, sentence_end in _split_sentence_spans(truncated_text):
         sentence_word_spans, sentence_links = _parse_sentence_features(
             truncated_text[sentence_start:sentence_end],
@@ -510,7 +513,7 @@ def expand_word_pair_matrices_to_tokens(
 
     # Iterate over the batches received
     for batch_idx in range(batch_size):
-        #Get the mapping for token_to_word for one example in the batch
+        #Get the mapping for token_to_word for one example in the batch (one sentence in the full example)
         mapping = token_to_word[batch_idx]
         #use the mapping to give each valid token an index in valid_positions
         #       finds all valid tokens
@@ -527,12 +530,11 @@ def expand_word_pair_matrices_to_tokens(
         """ 
         A valid example at this point
         
-        mapping         = [0, 1, 1, 2, -1]
+        toekn_to_word mapping = [0, 1, 1, 2, -1]
         valid_positions = [0, 1, 2, 3]
 
-        where -1 is the no_word filler value
+        token_to_word[valid_positions]  = [0, 1, 1, 2]
 
-        and each non-negative integer corresponds to a single word in the original prompt
         """
         
         """
