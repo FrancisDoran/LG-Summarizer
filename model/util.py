@@ -17,6 +17,8 @@ NO_LINK_TYPE = -1
 # this regex splits larger inputs into sentence sized spans before they are passed into link grammar.
 _SENTENCE_BOUNDARY_RE = re.compile(r'(?<=[.!?])\s+(?=(?:["\'])?[A-Z0-9])|\n+')
 
+# lg parses can fail to generate certain individual links
+
 """
 Notes on batching:
 
@@ -669,6 +671,8 @@ def attach_linkgram_matrices(model, token_distance_matrix: torch.Tensor, token_l
 -----------------------------------------------------------------------
 LINKGRAM PARSING UTILS
 -----------------------------------------------------------------------
+
+TODO: LG Splits up on punctuation
 """
 
 #memoize loading of the link grammar dictionary and parse options
