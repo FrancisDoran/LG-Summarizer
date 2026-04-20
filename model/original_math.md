@@ -1,13 +1,9 @@
-import numpy as np
-import torch
 
-"""
+File contains a pure, non-negotiable implementation of the math for our attention mechanism.
 
-file contains the attention computation
-that needs to be implemented in the model architecture.
+Saving here in a md in case the code strays or we need to refer to it.
 
-"""
-
+```python
 def token_to_word():
     pass
 
@@ -25,9 +21,12 @@ def get_key(token):
 
 def get_value(token):
     pass
+```
 
-# .shape is only available for values that are tensors/np arrays or that
-#       are implemented as children of those types
+.shape is only available for values that are tensors/np arrays or that
+       are implemented as children of those types
+
+```python
 def link_bias(tokens, graph, is_linked_bias, link_type_bias_dict):
     c = 0
     for i in tokens:
@@ -54,8 +53,7 @@ def link_bias(tokens, graph, is_linked_bias, link_type_bias_dict):
 
             c += alpha*vrj
     return c
-
-# this should be moved to the functions that require it, and instantiated as a local variable there.
-total_vertices = len(list(linkage.words()))
-
+```
+This should be moved to the functions that require it, and instantiated as a local variable there.
+total\_vertices = len(list(linkage.words()))
 
