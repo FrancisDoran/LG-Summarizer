@@ -3,7 +3,6 @@ Module that exposes an api for calculating model diagnostics.
 """
 
 import torch
-from torch import nn
 
 class DiagnosticCapture:
     

@@ -5,11 +5,12 @@ from typing import Sequence
 
 import linkgrammar as lg
 from linkgrammar import Sentence
-
-from model.model_diag import DiagnosticCapture
 import torch
 from torch import nn
 from transformers import AttentionInterface
+from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS
+
+from model.model_diagnostics.model_diag import DiagnosticCapture
 
 #constants
 NO_WORD = -1
@@ -127,6 +128,7 @@ def linkgram_attention(
 AttentionInterface.register("linkgram", linkgram_attention)
 
 
+ALL_MASK_ATTENTION_FUNCTIONS.register("linkgram", ALL_MASK_ATTENTION_FUNCTIONS._global_mapping["eager"])
 """
 -----------------------------------------------------------------------
 TENSOR MAPPING INTERFACE
