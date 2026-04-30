@@ -30,6 +30,9 @@ Dataset = {
 }
 
 features = ['article', 'highlights', 'id']
+
+where article is original article,
+and highlights is reference, human-made, summary
 """
 data = load_dataset(DATASET_ID, DATASET_VERSION, keep_in_memory=False, streaming=True)
 
@@ -46,4 +49,14 @@ model = BartForConditionalGeneration.from_pretrained(
     MODEL_ID,
     device_map="auto",
     torch_dtype=torch.float32,
+)
+
+"""
+PEFT Config
+"""
+peft_config = LoraConfig()
+
+peft_model = get_peft_model(
+        model=model,
+        peft_config=peft_config,
 )
