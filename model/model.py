@@ -8,17 +8,17 @@ from model.util import (
     prepare_linkgram_inputs,
 )
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+from . import (
+    DATASET_ID,
+    DATASET_VERSION,
+    DEVICE,
+    MAX_DISTANCE,
+    MAX_INPUT_LENGTH,
+    MODEL_ID,
+    TEST_SPLIT,
+)
 
-# Constants
-MODEL_ID = "facebook/bart-large-cnn"
-DATASET_ID = "abisee/cnn_dailymail"
-DATASET_VERSION = "3.0.0"
-TEST_SPLIT = "test"
-MAX_INPUT_LENGTH = 512
-MAX_DISTANCE = 10
-
-test_split = datasets.load_dataset(DATASET_ID, DATASET_VERSION, split=TEST_SPLIT)
+test_split = datasets.load_dataset(DATASET_ID, DATASET_VERSION, TEST_SPLIT)
 
 """
 print("\r\n")
