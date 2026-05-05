@@ -101,3 +101,5 @@ peft_model = get_peft_model(
         model=model,
         peft_config=peft_config,
 )
+
+peft_model.print_trainable_parameters()
