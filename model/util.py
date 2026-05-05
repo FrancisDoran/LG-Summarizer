@@ -239,6 +239,7 @@ def prepare_linkgram_inputs(
 
     # build the matrices on the same device that they will later be used on.
     matrix_device = torch.device(device) if device is not None else tokenized["input_ids"].device
+    # if no link type dicitonary is passed in, make an empty one.
     link_type_to_id = {} if link_type_to_id is None else link_type_to_id
     token_distance_matrices = []
     token_link_type_matrices = []

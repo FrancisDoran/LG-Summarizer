@@ -18,7 +18,7 @@ from . import (
     TEST_SPLIT,
 )
 
-test_split = datasets.load_dataset(DATASET_ID, DATASET_VERSION, TEST_SPLIT)
+data = datasets.load_dataset("abisee/cnn_dailymail", "3.0.0")
 
 """
 print("\r\n")
@@ -32,7 +32,7 @@ print(test_split[1000]["article"])
 print("\r\n")
 """
 
-test_article = test_split[1000]["article"]
+test_article = data[TEST_SPLIT][1000]["article"]
 
 """
 TOKENIZE(R)
@@ -42,6 +42,8 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 """
 This function tokenizes the input text and also builds the two token level
 matrices required by our custom attention mechanism.
+
+link_type_to_id is the global dictionary mapping link types to integer ids.
 """
 tokens, token_distance_matrix, token_link_type_matrix, link_type_to_id = prepare_linkgram_inputs(
     test_article,

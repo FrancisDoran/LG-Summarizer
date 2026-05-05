@@ -1,4 +1,4 @@
-from datasets import load_dataset
+import datasets
 import numpy as np
 from peft import LoraConfig, get_peft_model
 import torch
@@ -13,6 +13,15 @@ from model import (
     MODEL_ID,
     TEST_SPLIT,
 )
+from model.util import (
+    attach_linkgram_matrices,
+    inject_linkgram_attention,
+    prepare_linkgram_inputs,
+)
+
+# link type dictionary GLOBAL
+link_type_to_id = {}
+
 """
 Dataset
 
@@ -34,13 +43,15 @@ features = ['article', 'highlights', 'id']
 where article is original article,
 and highlights is reference, human-made, summary
 """
-data = load_dataset(DATASET_ID, DATASET_VERSION, keep_in_memory=False, streaming=True)
+data = datasets.load_dataset("abisee/cnn_dailymail", "3.0.0")
 
-print(data)
+test_article = data[TEST_SPLIT][1000]["article"]
+#print(test_article)
 
-train_split = data["train"]
-test_split = data["test"]
-evaluate_split = data["validation"]
+"""
+Tokenizer
+"""
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
 """
 Model
@@ -51,10 +62,40 @@ model = BartForConditionalGeneration.from_pretrained(
     torch_dtype=torch.float32,
 )
 
+tokens, token_distance_matrix, token_link_type_matrix, link_type_to_id = prepare_linkgram_inputs(
+    test_article,
+    tokenizer,
+    max_length=MAX_INPUT_LENGTH,
+    max_distance=MAX_DISTANCE,
+    device=DEVICE,
+)
+
+inject_linkgram_attention(model, max(1, len(link_type_to_id)), MAX_DISTANCE)
+
+attach_linkgram_matrices(model, token_distance_matrix, token_link_type_matrix)
+
+"""
+for layer in model.model.encoder.layers:
+    print(layer)
+"""
+
 """
 PEFT Config
 """
-peft_config = LoraConfig()
+
+modules_to_train = []
+for layer in model.model.encoder.layers:
+    modules_to_train.append(layer.self_attn.distance_bias)
+    # distance bias layers
+    #print(layer.self_attn.distance_bias)
+    modules_to_train.append(layer.self_attn.link_type_bias)
+    # link type bias layers
+    #print(layer.self_attn.link_type_bias)
+
+peft_config = LoraConfig(
+    target_modules=modules_to_train,
+    modules_to_save=["link_type_to_id"],
+)
 
 peft_model = get_peft_model(
         model=model,

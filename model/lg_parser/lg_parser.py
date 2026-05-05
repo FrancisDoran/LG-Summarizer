@@ -108,6 +108,7 @@ def parse_sentence_features(
             continue
 
         link_key = (link.left_label, link.right_label)
+        # append to global link type dictionary if it's not already there.
         link_type_id = link_type_to_id.setdefault(link_key, len(link_type_to_id))
         links.append(
             (
