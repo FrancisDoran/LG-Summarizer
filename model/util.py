@@ -17,25 +17,6 @@ from model.token_link_translation.token_link_translation import (
 
 # NOTE: lg parses can fail to generate certain individual links
 
-
-"""
-Notes on batching:
-
-Normally a batch would imply multiple full text examples being processed together.
-
-But here, since the link grammar parsing by default operates on a sentence at a time,
-we treat each sentence as its own batch.
-
-1 Batch
----------------------
-Originally one full text prompt -> is now one sentence "span"
-
-This may cause some difficulties with organizing a training regement since it's typical
-to train on multiple full examples each representing a batch. So it may be necessary to
-reorganize the training loop to accommodate this, or to find a way to batch multiple sentences together.
-But we can take a look at that when it comes up.
-"""
-
 """
 -----------------------------------------------------------------------
 ATTENTION MECHANISM
@@ -77,8 +58,8 @@ def linkgram_attention(
     
     # if this is an encoder layer and it has our biases attached, apply the link grammar bias
     if getattr(module, "is_decoder", False) == False and hasattr(module, "distance_bias"):
-        distance = getattr(module, "token_distance_matrix", None)
-        link_type = getattr(module, "token_link_type_matrix", None)
+        distance = kwargs.get("token_distance_matrix", getattr(module, "token_distance_matrix", None))
+        link_type = kwargs.get("token_link_type_matrix", getattr(module, "token_link_type_matrix", None))
         
         if distance is not None and link_type is not None:
             #ensure matrices are longs
@@ -91,7 +72,7 @@ def linkgram_attention(
                                                                                       #        so that they can be used as indices for the embedding lookup.
             #This gets the "attached" distance bias
             dist_bias = module.distance_bias(distance_ids) * valid_distance_mask.unsqueeze(-1) # unsqueeze is used here for tensor shaping, 
-            diagnostic_capture.from_tensor(dist_bias, "Link Type Bias")
+            diagnostic_capture.from_tensor(dist_bias, "Link Distance Bias")
                                                                                                #       module.distance_bias is from the injected embedding layer
             # for directly linked words, add the learned link type bias as well.
             #       Get the "attached" link type bias
@@ -302,4 +283,5 @@ def attach_linkgram_matrices(model, token_distance_matrix: torch.Tensor, token_l
     for layer in model.model.encoder.layers:
         layer.self_attn.token_distance_matrix = token_distance_matrix
         layer.self_attn.token_link_type_matrix = token_link_type_matrix
+
 

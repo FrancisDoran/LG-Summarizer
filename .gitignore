@@ -10,3 +10,5 @@ __pycache__/
 .vim/
 
 link-grammar/
+
+bart_linkgram_training/
