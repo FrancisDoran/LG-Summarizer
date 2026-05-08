@@ -75,7 +75,7 @@ peft_model = get_peft_model(
     peft_config=peft_config,
 )
 
-peft_model.print_trainable_parameters()
+#peft_model.print_trainable_parameters()
 
 """
 Data Collator
