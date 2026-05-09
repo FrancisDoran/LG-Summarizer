@@ -44,7 +44,8 @@ class DiagnosticCapture:
         bias_sum.append(mean)
 
         return bias_sum
-
+    
+    # Generate ROUGE metrics between a generated summary and a reference summary
     def rouge_metric_from_single_example(self, reference_summary: str, generated_summary: str) -> dict[str, float]:
 
         scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
