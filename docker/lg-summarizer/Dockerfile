@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 
-RUN git clone https://github.com/FrancisDoran/LG-Summarizer.git && \
+RUN git clone -b docker https://github.com/FrancisDoran/LG-Summarizer.git && \
 	cd LG-Summarizer/build/python_deps && \
 	./install_deps.sh
 
