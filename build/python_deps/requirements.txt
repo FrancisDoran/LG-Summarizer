@@ -11,7 +11,7 @@ Automat==22.10.0
 Babel==2.10.3
 bcrypt==3.2.2
 blinker==1.7.0
-Brlapi==0.8.5
+# Brlapi==0.8.5
 certifi==2026.2.25
 chardet==5.2.0
 charset-normalizer==3.4.7
