@@ -12,3 +12,7 @@ __pycache__/
 link-grammar/
 
 bart_linkgram_training/
+
+workspace/
+
+hf-cache/

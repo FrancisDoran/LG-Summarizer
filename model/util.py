@@ -55,24 +55,24 @@ def linkgram_attention(
 
     # compute the baseline attention scores
     attention_scores = torch.matmul(query, key.transpose(-1, -2)) * scaling
-    
+
     # if this is an encoder layer and it has our biases attached, apply the link grammar bias
     if getattr(module, "is_decoder", False) == False and hasattr(module, "distance_bias"):
         distance = kwargs.get("token_distance_matrix", getattr(module, "token_distance_matrix", None))
         link_type = kwargs.get("token_link_type_matrix", getattr(module, "token_link_type_matrix", None))
-        
+
         if distance is not None and link_type is not None:
             #ensure matrices are longs
             distance = distance.long()
             link_type = link_type.long()
 
             # use the token distances to gather the learned distance bias for each token pair.
-            valid_distance_mask = distance.ge(0) # ge -> greater than or equal to 
+            valid_distance_mask = distance.ge(0) # ge -> greater than or equal to
             distance_ids = distance.clamp(0, module.distance_bias.num_embeddings - 1) # clamp -> limits the values in distance to be between 0 and num_embeddings - 1,
                                                                                       #        so that they can be used as indices for the embedding lookup.
             #This gets the "attached" distance bias
-            dist_bias = module.distance_bias(distance_ids) * valid_distance_mask.unsqueeze(-1) # unsqueeze is used here for tensor shaping, 
-            diagnostic_capture.from_tensor(dist_bias, "Link Distance Bias")
+            dist_bias = module.distance_bias(distance_ids) * valid_distance_mask.unsqueeze(-1) # unsqueeze is used here for tensor shaping,
+            diagnostic_capture.bias_sum_from_tensor(dist_bias, "Link Distance Bias")
                                                                                                #       module.distance_bias is from the injected embedding layer
             # for directly linked words, add the learned link type bias as well.
             #       Get the "attached" link type bias
@@ -80,18 +80,18 @@ def linkgram_attention(
             valid_link_type_mask = link_type.clamp(0, module.link_type_bias.num_embeddings - 1)
             #uses link type bias to ensure that only valid link types contribute to the bias
             link_bias = module.link_type_bias(valid_link_type_mask) * direct_link_mask.unsqueeze(-1)
-            diagnostic_capture.from_tensor(link_bias, "Link Type Bias")
-            
+            diagnostic_capture.bias_sum_from_tensor(link_bias, "Link Type Bias")
+
             # sum the biases and permute to match (batch, heads, seq, seq)
             total_bias = (dist_bias + link_bias).permute(0, 3, 1, 2)
-            diagnostic_capture.from_tensor(total_bias, "Total Link Bias")
+            diagnostic_capture.bias_sum_from_tensor(total_bias, "Total Link Bias")
             attention_scores = attention_scores + total_bias
 
     # Apply the attention mask if there is one
     #       In our case there likely won' tbe
     if attention_mask is not None:
         attention_scores = attention_scores + attention_mask
-    
+
     # softmax and define dropout
     attention_weights = torch.nn.functional.softmax(attention_scores, dim=-1)
     attention_probs = torch.nn.functional.dropout(attention_weights, p=dropout, training=module.training)
@@ -100,7 +100,7 @@ def linkgram_attention(
     #       final step as layed out in project proposal
     attention_output = torch.matmul(attention_probs, value)
     attention_output = attention_output.transpose(1, 2).contiguous()
-    
+
     return attention_output, None
 
 # register our custom attention globally so it can be "attached" to the model later by name
@@ -254,21 +254,21 @@ def inject_linkgram_attention(model, num_link_types: int, max_distance: int):
     config = model.config
     encoder = model.model.encoder
     num_heads = config.encoder_attention_heads
-    
+
     # tell the model to use our custom attention function
     config._attn_implementation = "linkgram"
-    
+
     # attach the bias embeddings directly to the encoder's self-attention modules
     for layer in encoder.layers:
         attn = layer.self_attn
-        
+
         attn.distance_bias = nn.Embedding(max_distance + 1, num_heads)
         attn.link_type_bias = nn.Embedding(num_link_types, num_heads)
-        
+
         # initialize with zeros so it acts exactly like baseline BART before training
         nn.init.zeros_(attn.distance_bias.weight)
         nn.init.zeros_(attn.link_type_bias.weight)
-        
+
         # Move the embeddings to the same device and dtype as the attention projection weights
         attn.distance_bias.to(device=attn.q_proj.weight.device, dtype=attn.q_proj.weight.dtype)
         attn.link_type_bias.to(device=attn.q_proj.weight.device, dtype=attn.q_proj.weight.dtype)
@@ -283,5 +283,3 @@ def attach_linkgram_matrices(model, token_distance_matrix: torch.Tensor, token_l
     for layer in model.model.encoder.layers:
         layer.self_attn.token_distance_matrix = token_distance_matrix
         layer.self_attn.token_link_type_matrix = token_link_type_matrix
-
-

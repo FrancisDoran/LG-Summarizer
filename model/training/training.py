@@ -94,20 +94,20 @@ data_collator = LinkGramDataCollator(
 TrainingArguments
 """
 training_args = TrainingArguments(
-    output_dir="./bart_linkgram_training",
+    output_dir="/workspace/checkpoints/bart_linkgram_training",
     learning_rate=1e-4,
-    per_device_train_batch_size=4,
-    per_device_eval_batch_size=4,
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=32,
     num_train_epochs=1,
     weight_decay=0.01,
     eval_strategy="steps",
-    eval_steps=500,
+    eval_steps=1500,
     save_strategy="steps",
-    save_steps=500,
+    save_steps=1500,
     logging_steps=10,
     load_best_model_at_end=True,
     # Do not change...this allows the link bias tensors to be passed throughout the whole model
-    remove_unused_columns=False, 
+    remove_unused_columns=False,
 )
 
 """
