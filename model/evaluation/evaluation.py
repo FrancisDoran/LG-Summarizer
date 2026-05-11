@@ -5,6 +5,7 @@ import datasets
 from datasets import load_dataset
 from peft import PeftModel
 import torch
+from tqdm import tqdm
 from transformers import AutoTokenizer, BartForConditionalGeneration
 
 from model import DEVICE, MAX_DISTANCE, MAX_INPUT_LENGTH, MODEL_ID
@@ -90,92 +91,102 @@ link_type_to_id = {}
 data_collator = LinkGramDataCollator(tokenizer, MAX_INPUT_LENGTH, MAX_DISTANCE, link_type_to_id, device=DEVICE)
 print("Models and DataCollator loaded successfully.")
 
-example = test_split[1000]
-print("\n" + "="*80)
-print("Article:", example["article"])
-print("="*80)
+def evaluate_models(test_data, num_examples=100):
+    diag = DiagnosticCapture()
+    
+    metrics_to_track = ["rouge1", "rouge2", "rougeL"]
+    stats = ["precision", "recall", "fmeasure"]
 
-# Use the data_collator to prepare inputs
-batch = data_collator([example])
+    # allocate "space" for adding up scores across examples
+    accumulated_baseline = {metric: {stat: 0.0 for stat in stats} for metric in metrics_to_track}
+    accumulated_custom = {metric: {stat: 0.0 for stat in stats} for metric in metrics_to_track}
 
-def single_comparison_run(custom_model, baseline_model, batch, tokenizer):
-    with torch.no_grad():
-        attach_linkgram_matrices(
-            base_model, 
-            batch["token_distance_matrix"], 
-            batch["token_link_type_matrix"]
-        )
+    print(f"Starting evaluation on {num_examples} examples...")
 
-        generated_ids = model.generate(
-            input_ids=batch["input_ids"],
-            max_length=MAX_INPUT_LENGTH,
-            num_beams=4,
-            early_stopping=True,
-        )
+    for i in tqdm(range(num_examples), desc="Evaluating"):
+        example = test_data[i]
+        batch = data_collator([example])
+        
+        with torch.no_grad():
 
-        generated_summary = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+            # Baseline model
+            baseline_generated_ids = baseline_model.generate(
+                input_ids=batch["input_ids"],
+                max_length=MAX_INPUT_LENGTH,
+                num_beams=4,
+                early_stopping=True,
+            )
+            baseline_summary = tokenizer.decode(baseline_generated_ids[0], skip_special_tokens=True)
+            
+            attach_linkgram_matrices(
+                base_model, 
+                batch["token_distance_matrix"], 
+                batch["token_link_type_matrix"]
+            )
+            
+            # Custom model
+            custom_generated_ids = model.generate(
+                input_ids=batch["input_ids"],
+                max_length=MAX_INPUT_LENGTH,
+                num_beams=4,
+                early_stopping=True,
+            )
+            custom_summary = tokenizer.decode(custom_generated_ids[0], skip_special_tokens=True)
+            
+            reference_summary = example["highlights"]
+            
+            # Get rouge scores
+            baseline_scores = diag.rouge_metric_from_single_example(reference_summary, baseline_summary)
+            custom_scores = diag.rouge_metric_from_single_example(reference_summary, custom_summary)
 
-        baseline_generated_ids = baseline_model.generate(
-            input_ids=batch["input_ids"],
-            max_length=MAX_INPUT_LENGTH,
-            num_beams=4,
-            early_stopping=True,
-        )
-        baseline_summary = tokenizer.decode(baseline_generated_ids[0], skip_special_tokens=True)
+            # accumulate
+            for metric in metrics_to_track:
+                for stat in stats:
+                    # pattern: get the current accumulated value for each stat within each metric
+                    #       then add the new scores from the current example and continue to the next example
+                    accumulated_baseline[metric][stat] += getattr(baseline_scores[metric], stat)
+                    accumulated_custom[metric][stat] += getattr(custom_scores[metric], stat)
 
-        print("\n[Vanilla BART Summary]:")
-        print(baseline_summary)
+    # Calculate averages by dividing each stat within each metric
+    avg_baseline = {metric: {stat: accumulated_baseline[metric][stat] / num_examples for stat in stats} for metric in metrics_to_track}
+    avg_custom = {metric: {stat: accumulated_custom[metric][stat] / num_examples for stat in stats} for metric in metrics_to_track}
+    
+    return avg_baseline, avg_custom
 
-        print("\n[LinkGram-Enhanced Summary]:")
-        print(generated_summary)
+avg_baseline, avg_custom = evaluate_models(test_split, num_examples=100)
 
-        print("\n[Reference Summary]:")
-        print(example["highlights"])
+metric_dict = MetricDictionary()
 
-        diag = DiagnosticCapture()
-        baseline_model_rouge, custom_model_rouge = diag.rouge_two_model_comparison(
-            reference_summary=example["highlights"],
-            baseline_model_generated_summary=baseline_summary,
-            custom_model_generated_summary=generated_summary
-        )
+# mock dict template from plot.py
+mapping = {
+    "rouge1": "rouge-1",
+    "rouge2": "rouge-2",
+    "rougeL": "rouge-len"
+}
+stat_mapping = {
+    "precision": "precision",
+    "recall": "recall",
+    "fmeasure": "f1"
+}
 
-        return (baseline_model_rouge, custom_model_rouge)
+#use above mock to populate the actual metric dictionary
+for m_orig, m_new in mapping.items():
+    for s_orig, s_new in stat_mapping.items():
+        """
+        Similar to the double fors and dict comprehensions used above, just loop trough
+        to access each individual stat, and then add the corresponding accumulated average score
+        from above to that specific stat in the metric dictionary.
+        """
+        metric_dict.add_metric("baseline", m_new, s_new, avg_baseline[m_orig][s_orig])
+        metric_dict.add_metric("custom", m_new, s_new, avg_custom[m_orig][s_orig])
 
-baseline_model_scores, custom_model_scores = single_comparison_run(model, baseline_model, batch, tokenizer)
+print("\nEvaluation complete. Average Scores:")
+print(f"Baseline: {avg_baseline}")
+print(f"Custom: {avg_custom}")
 
-MetricDictionary = MetricDictionary()
-
-# easy refactor, just use for loops.
-# leaving it like this for now so it's easier to visualize interface between DiagnosticCapture, MetricDictionary, and the script above
-MetricDictionary.add_metric("baseline", "rouge-1", "precision", baseline_model_scores["rouge1"].precision)
-MetricDictionary.add_metric("baseline", "rouge-1", "recall", baseline_model_scores["rouge1"].recall)
-MetricDictionary.add_metric("baseline", "rouge-1", "f1", baseline_model_scores["rouge1"].fmeasure)
-
-MetricDictionary.add_metric("baseline", "rouge-2", "precision", baseline_model_scores["rouge2"].precision)
-MetricDictionary.add_metric("baseline", "rouge-2", "recall", baseline_model_scores["rouge2"].recall)
-MetricDictionary.add_metric("baseline", "rouge-2", "f1", baseline_model_scores["rouge2"].fmeasure)
-
-MetricDictionary.add_metric("baseline", "rouge-len", "precision", baseline_model_scores["rougeL"].precision)
-MetricDictionary.add_metric("baseline", "rouge-len", "recall", baseline_model_scores["rougeL"].recall)
-MetricDictionary.add_metric("baseline", "rouge-len", "f1", baseline_model_scores["rougeL"].fmeasure)
-
-
-MetricDictionary.add_metric("custom", "rouge-1", "precision", custom_model_scores["rouge1"].precision)
-MetricDictionary.add_metric("custom", "rouge-1", "recall", custom_model_scores["rouge1"].recall)
-MetricDictionary.add_metric("custom", "rouge-1", "f1", custom_model_scores["rouge1"].fmeasure)
-
-MetricDictionary.add_metric("custom", "rouge-2", "precision", custom_model_scores["rouge2"].precision)
-MetricDictionary.add_metric("custom", "rouge-2", "recall", custom_model_scores["rouge2"].recall)
-MetricDictionary.add_metric("custom", "rouge-2", "f1", custom_model_scores["rouge2"].fmeasure)
-
-MetricDictionary.add_metric("custom", "rouge-len", "precision", custom_model_scores["rougeL"].precision)
-MetricDictionary.add_metric("custom", "rouge-len", "recall", custom_model_scores["rougeL"].recall)
-MetricDictionary.add_metric("custom", "rouge-len", "f1", custom_model_scores["rougeL"].fmeasure)
-
-create_bar_graph(MetricDictionary.get())
-
-
-
+print("\nGenerating plots in 'generated_plots/'...")
+# create the plot
+create_bar_graph(metric_dict.get())
 
 
 

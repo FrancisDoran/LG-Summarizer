@@ -58,8 +58,9 @@ class MetricDictionary:
     data: dict
 
     def __init__(self):
-        #initialize the metric dictionary using the dictionary template
-        self.data = _TEMP_METRIC_DICT
+        #initialize the metric dictionary using a copy of the dictionary template
+        import copy
+        self.data = copy.deepcopy(_TEMP_METRIC_DICT)
  
     def add_metric(self, model_type: str, metric_name: str, data_point_name: str, value: float):
         if model_type not in self.data:
@@ -117,7 +118,7 @@ def create_bar_graph(data=example_data):
         plt.title(f'{metric} Scores for Baseline and Custom Models')
         plt.legend()
 
-        plt.savefig(f'generated_plots/{metric}_scores.png', bbox_inches='tight', transparent=True)  # Save the plot as a PNG file
+        plt.savefig(f'generated_plots/{metric}_scores.png', bbox_inches='tight', transparent=True)
         plt.show()
 
 if __name__ == "__main__":
