@@ -1,3 +1,6 @@
+import json
+import os
+
 import datasets
 import numpy as np
 from peft import LoraConfig, get_peft_model
@@ -6,6 +9,7 @@ from transformers import (
     AutoTokenizer,
     BartForConditionalGeneration,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
 
@@ -93,8 +97,9 @@ data_collator = LinkGramDataCollator(
 """
 TrainingArguments
 """
+output_dir = "./bart_linkgram_training"
 training_args = TrainingArguments(
-    output_dir="./bart_linkgram_training",
+    output_dir=output_dir,
     learning_rate=1e-4,
     per_device_train_batch_size=4,
     per_device_eval_batch_size=4,
@@ -122,4 +127,13 @@ trainer = Trainer(
 )
 
 # To start training:
-trainer.train()
+try:
+    trainer.train()
+    trainer.save_model(output_dir)
+except KeyboardInterrupt:
+    print("Training interrupted manually. Saving progress...")
+    trainer.save_model(output_dir)
+except Exception as e:
+    print(f"An error occurred: {e}")
+    trainer.save_model(output_dir)
+    raise e
