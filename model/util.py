@@ -55,7 +55,7 @@ def linkgram_attention(
 
     # compute the baseline attention scores
     attention_scores = torch.matmul(query, key.transpose(-1, -2)) * scaling
-    
+
     # if this is an encoder layer and it has our biases attached, apply the link grammar bias
     if getattr(module, "is_decoder", False) == False and hasattr(module, "distance_bias"):
         distance = kwargs.get("token_distance_matrix", getattr(module, "token_distance_matrix", None))

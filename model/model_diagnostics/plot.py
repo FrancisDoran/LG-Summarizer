@@ -1,3 +1,5 @@
+import os
+
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use('QtAgg')
@@ -99,6 +101,8 @@ def create_bar_graph(data=example_data):
     metrics = ["rouge-1", "rouge-2", "rouge-len"]
     scores = ["precision", "recall", "f1"]
 
+    os.makedirs('generated_plots', exist_ok=True)
+
     for metric in metrics:
         plt.figure(figsize=(10, 6))
         baseline_scores = [data["baseline"][metric][score] for score in scores]
@@ -116,7 +120,9 @@ def create_bar_graph(data=example_data):
         plt.savefig(f'generated_plots/{metric}_scores.png', bbox_inches='tight', transparent=True)  # Save the plot as a PNG file
         plt.show()
 
-create_bar_graph()
+if __name__ == "__main__":
+    create_bar_graph()
+
 
 # save to disk
 def save_plot():
