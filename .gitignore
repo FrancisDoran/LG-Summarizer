@@ -12,3 +12,5 @@ __pycache__/
 link-grammar/
 
 bart_linkgram_training/
+
+generated_plots/

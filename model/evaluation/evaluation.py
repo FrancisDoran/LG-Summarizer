@@ -107,6 +107,18 @@ def evaluate_models(test_data, num_examples=100):
         example = test_data[i]
         batch = data_collator([example])
         
+        # mock dict template from plot.py
+        mapping = {
+            "rouge1": "rouge-1",
+            "rouge2": "rouge-2",
+            "rougeL": "rouge-len"
+        }
+        stat_mapping = {
+            "precision": "precision",
+            "recall": "recall",
+            "fmeasure": "f1"
+        }
+
         with torch.no_grad():
 
             # Baseline model
@@ -138,6 +150,23 @@ def evaluate_models(test_data, num_examples=100):
             # Get rouge scores
             baseline_scores = diag.rouge_metric_from_single_example(reference_summary, baseline_summary)
             custom_scores = diag.rouge_metric_from_single_example(reference_summary, custom_summary)
+            
+            for m_key, m_name in mapping.items():
+                for s_key, s_name in stat_mapping.items():
+                    
+                    c_val = getattr(custom_scores[m_key], s_key)
+                    b_val = getattr(baseline_scores[m_key], s_key)
+
+                    if ((c_val - b_val) > 0.20 * b_val):
+                        print("\n" + "="*80)
+                        print(f"Significant improvement detected in {m_name} {s_name}:")
+                        print(f"Baseline: {b_val:.4f}")
+                        print(f"Custom: {c_val:.4f}")
+                        print(f"Example Index: {i}")
+                        print(f"Reference Summary: {reference_summary}")
+                        print(f"Baseline Summary: {baseline_summary}")
+                        print(f"Custom Summary: {custom_summary}")
+                        print("="*80)
 
             # accumulate
             for metric in metrics_to_track:
@@ -153,7 +182,7 @@ def evaluate_models(test_data, num_examples=100):
     
     return avg_baseline, avg_custom
 
-avg_baseline, avg_custom = evaluate_models(test_split, num_examples=100)
+avg_baseline, avg_custom = evaluate_models(test_split, num_examples=10)
 
 metric_dict = MetricDictionary()
 
