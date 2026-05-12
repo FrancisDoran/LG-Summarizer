@@ -1,5 +1,6 @@
 import torch
 
+from model.model_diagnostics.model_diagnostics import DiagnosticCapture
 from model.util import prepare_linkgram_inputs
 
 """
@@ -42,6 +43,9 @@ class LinkGramDataCollator:
             device=self.device,
             link_type_to_id=self.link_type_to_id,
         )
+
+        diagnostic_capture = DiagnosticCapture()
+        diagnostic_capture.get_tensor_norm(link_matrix, diagnostic_name="Link Type Matrix Norm")
 
         #tokenize highlights for labels
         labels = self.tokenizer(

@@ -1,3 +1,4 @@
+import numpy as np
 from rouge_score import rouge_scorer
 import torch
 
@@ -44,6 +45,14 @@ class DiagnosticCapture:
         print(f"Mean of {diagnostic_name}: {mean}")
         print("="*80)
         """
+
+    def get_tensor_norm(self, tensor: torch.Tensor, diagnostic_name: str = "Norm of Link Type Tensor"):
+        norm = np.linalg.norm(tensor.cpu().numpy())
+        
+        print("\n" + "="*80)
+        print(f"Norm of {diagnostic_name}: {norm}")
+        print("="*80)
+
     
     # Generate ROUGE metrics between a generated summary and a reference summary
     def rouge_metric_from_single_example(self, reference_summary: str, generated_summary: str):

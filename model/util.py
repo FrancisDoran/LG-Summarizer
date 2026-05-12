@@ -81,6 +81,7 @@ def linkgram_attention(
             #uses link type bias to ensure that only valid link types contribute to the bias
             link_bias = module.link_type_bias(valid_link_type_mask) * direct_link_mask.unsqueeze(-1)
             diagnostic_capture.from_tensor(link_bias, "Link Type Bias")
+            diagnostic_capture.get_tensor_norm(link_bias, "Link Type Bias Norm")
             
             # sum the biases and permute to match (batch, heads, seq, seq)
             total_bias = (dist_bias + link_bias).permute(0, 3, 1, 2)
