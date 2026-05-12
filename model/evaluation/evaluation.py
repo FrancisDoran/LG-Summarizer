@@ -3,6 +3,7 @@ import os
 
 import datasets
 from datasets import load_dataset
+from linkgrammar import Dictionary, ParseOptions, Sentence
 from peft import PeftModel
 import torch
 from tqdm import tqdm
@@ -151,12 +152,15 @@ def evaluate_models(test_data, num_examples=100):
             baseline_scores = diag.rouge_metric_from_single_example(reference_summary, baseline_summary)
             custom_scores = diag.rouge_metric_from_single_example(reference_summary, custom_summary)
             
+            #loop through each stat within each metric and compare the corresponding stat score from the baseline and custom model.
             for m_key, m_name in mapping.items():
                 for s_key, s_name in stat_mapping.items():
-                    
+
+                    # get the specific stat score for the current metric and example
                     c_val = getattr(custom_scores[m_key], s_key)
                     b_val = getattr(baseline_scores[m_key], s_key)
-
+                    
+                    # check if the custom model's score is significantly better than the baseline (e.g., by more than 20%)
                     if ((c_val - b_val) > 0.20 * b_val):
                         print("\n" + "="*80)
                         print(f"Significant improvement detected in {m_name} {s_name}:")
@@ -167,6 +171,15 @@ def evaluate_models(test_data, num_examples=100):
                         print(f"Baseline Summary: {baseline_summary}")
                         print(f"Custom Summary: {custom_summary}")
                         print("="*80)
+
+                    # to get anything from this would need to go through and lg parse each sentence in the reference summary,
+                    # do that for many outlier examples,
+                    # and then look for any patterns between the lg graphs for each example.
+                    # that in it of itself is a machine learning task
+                    # where essentially we are comparing features of graphs to find commonalities.
+                    #
+                    # unless, we can interface the DataCollator object to get the link info instead.
+                    #       wont't be fast enough. We would have to route this through the entire lg architecture
 
             # accumulate
             for metric in metrics_to_track:

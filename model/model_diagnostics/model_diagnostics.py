@@ -49,9 +49,11 @@ class DiagnosticCapture:
     def get_tensor_norm(self, tensor: torch.Tensor, diagnostic_name: str = "Norm of Link Type Tensor"):
         norm = np.linalg.norm(tensor.cpu().numpy())
         
+        """
         print("\n" + "="*80)
-        print(f"Norm of {diagnostic_name}: {norm}")
+        print(f"{diagnostic_name}: {norm}")
         print("="*80)
+        """
 
     
     # Generate ROUGE metrics between a generated summary and a reference summary
