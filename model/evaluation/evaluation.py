@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 import datasets
 from datasets import load_dataset
@@ -163,23 +164,50 @@ def evaluate_models(test_data, num_examples=100):
                     # check if the custom model's score is significantly better than the baseline (e.g., by more than 20%)
                     if ((c_val - b_val) > 0.20 * b_val):
                         print("\n" + "="*80)
+                        print("\n")
                         print(f"Significant improvement detected in {m_name} {s_name}:")
+                        print("\n")
                         print(f"Baseline: {b_val:.4f}")
+                        print("\n")
                         print(f"Custom: {c_val:.4f}")
+                        print("\n")
                         print(f"Example Index: {i}")
+                        print("\n")
+                        print("Article...")
+                        print("\n")
+                        print(example["article"])
+                        print("\n")
                         print(f"Reference Summary: {reference_summary}")
+                        print("\n")
                         print(f"Baseline Summary: {baseline_summary}")
+                        print("\n")
                         print(f"Custom Summary: {custom_summary}")
-                        print("="*80)
+                        print("\n")
 
-                    # to get anything from this would need to go through and lg parse each sentence in the reference summary,
-                    # do that for many outlier examples,
-                    # and then look for any patterns between the lg graphs for each example.
-                    # that in it of itself is a machine learning task
-                    # where essentially we are comparing features of graphs to find commonalities.
-                    #
-                    # unless, we can interface the DataCollator object to get the link info instead.
-                    #       wont't be fast enough. We would have to route this through the entire lg architecture
+                        """
+                        Quick LG Setup
+                        """
+                        def print_linkage(lkg):
+                            print(lkg.diagram())
+                        di = Dictionary('en')
+                        po = ParseOptions()
+                        po.linkage_limit = 1
+                        po.verbosity = 0
+                        print("="*80)
+                        
+                        from model.lg_parser.lg_parser import (split_sentence_spans)
+                        
+                        sentence_indices = split_sentence_spans(example["article"])
+
+                        for sentence_index in sentence_indices:
+                            try:
+                                print(example["article"][sentence_index[0]:sentence_index[1]])
+                                sent = Sentence(example["article"][sentence_index[0]:sentence_index[1]], di, po)
+                                linkages = sent.parse()
+                                for linkage in linkages:
+                                    print_linkage(linkage)
+                            except Exception:
+                                continue
 
             # accumulate
             for metric in metrics_to_track:
